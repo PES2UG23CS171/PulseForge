@@ -28,6 +28,6 @@ public record MetronomeSettings(
     }
 
     public double quarterNoteBpm() {
-        return beatUnit == 8 ? bpm / 2.0 : bpm;
+        return bpm;
     }
 }

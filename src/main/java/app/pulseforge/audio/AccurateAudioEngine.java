@@ -31,6 +31,7 @@ public final class AccurateAudioEngine implements AutoCloseable {
     public boolean isPlaying() { return playing.get(); }
     public String errorMessage() { return errorMessage; }
     public boolean customSampleLoaded() { return samples.customSampleLoaded(); }
+    public void prepareCustomSample(String path) { samples.load(path); }
     public void addPulseListener(Consumer<BeatPulse> listener) { pulseListeners.add(listener); }
     public void addPlayListener(Consumer<Boolean> listener) { playListeners.add(listener); }
 
@@ -153,7 +154,7 @@ public final class AccurateAudioEngine implements AutoCloseable {
         voices.add(new Voice(data, -offset, gain));
     }
 
-    private static double intervalFrames(MetronomeSettings settings, long sequence) {
+    static double intervalFrames(MetronomeSettings settings, long sequence) {
         int steps = settings.subdivision().stepsPerQuarter();
         double nominal = SAMPLE_RATE * 60.0 / settings.quarterNoteBpm() / steps;
         if (steps > 1 && steps % 2 == 0 && settings.swing() > .5001) {
