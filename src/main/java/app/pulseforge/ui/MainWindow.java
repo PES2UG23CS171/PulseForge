@@ -1,76 +1,74 @@
 package app.pulseforge.ui;
 
 import app.pulseforge.audio.AccurateAudioEngine;
-import app.pulseforge.model.*;
+import app.pulseforge.audio.TransportState;
+import app.pulseforge.model.MetronomeSettings;
+import app.pulseforge.model.MetronomeState;
+import app.pulseforge.model.Subdivision;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.event.*;
-import java.io.File;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.concurrent.CompletableFuture;
+import java.util.EnumMap;
+import java.util.Map;
 
 public final class MainWindow extends JFrame {
     private final MetronomeState state;
     private final AccurateAudioEngine engine;
     private final TempoWheel tempoWheel;
     private final BeatVisualizer visualizer = new BeatVisualizer();
-    private final AccentPattern accentPattern = new AccentPattern();
-    private final JButton playButton = Theme.button("▶  START");
-    private final JLabel status = new JLabel("SPACE TO START");
-    private final JSlider swingSlider = new JSlider(50, 75);
-    private final JLabel swingValue = new JLabel();
-    private final JComboBox<SoundType> soundBox = new JComboBox<>(SoundType.values());
-    private final JButton importButton = Theme.button("IMPORT");
+    private final SettingsDialog settingsDialog;
+    private final JLabel bpmValue = valueLabel(29);
+    private final JLabel meterValue = valueLabel(18);
+    private final JLabel subdivisionValue = valueLabel(15);
+    private final JLabel tempoName = new JLabel();
+    private final JLabel status = new JLabel("READY");
+    private final JLabel settingsSummary = new JLabel();
+    private final JButton stopButton = Theme.button("■  STOP");
+    private final Map<Subdivision, JToggleButton> subdivisionButtons = new EnumMap<>(Subdivision.class);
     private final Deque<Long> taps = new ArrayDeque<>();
-    private boolean syncing;
 
     public MainWindow(MetronomeState state, AccurateAudioEngine engine) {
         super("PulseForge");
         this.state = state;
         this.engine = engine;
         this.tempoWheel = new TempoWheel(state.get().bpm());
+        this.settingsDialog = new SettingsDialog(this, state, engine);
         buildWindow();
         wireEvents();
         syncFromState(state.get());
+        updateTransport(TransportState.STOPPED);
     }
 
     private void buildWindow() {
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         setResizable(false);
-        setSize(438, 690);
-        setMinimumSize(getSize());
         setLocationByPlatform(true);
         setBackground(Theme.BACKGROUND);
 
         var root = new JPanel();
         root.setBackground(Theme.BACKGROUND);
-        root.setBorder(new EmptyBorder(14, 18, 16, 18));
+        root.setBorder(new EmptyBorder(13, 16, 14, 16));
         root.setLayout(new BoxLayout(root, BoxLayout.Y_AXIS));
+        root.setPreferredSize(new Dimension(420, 590));
         setContentPane(root);
 
         root.add(header());
+        root.add(Box.createVerticalStrut(7));
+        root.add(readout());
         root.add(Box.createVerticalStrut(2));
         center(root, tempoWheel);
-        root.add(tempoButtons());
-        root.add(Box.createVerticalStrut(13));
-        root.add(subdivisionPanel());
+        root.add(transportControls());
         root.add(Box.createVerticalStrut(5));
         center(root, visualizer);
-        root.add(Box.createVerticalStrut(5));
-        root.add(settingsPanel());
-        root.add(Box.createVerticalGlue());
-        root.add(playButton);
-
-        playButton.setAlignmentX(Component.CENTER_ALIGNMENT);
-        playButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, 48));
-        playButton.setPreferredSize(new Dimension(400, 48));
-        playButton.setBackground(Theme.ACCENT);
-        playButton.setForeground(new Color(7, 26, 22));
-        playButton.setFont(new Font("SansSerif", Font.BOLD, 13));
+        root.add(Box.createVerticalStrut(3));
+        root.add(subdivisionPanel());
+        root.add(Box.createVerticalStrut(8));
+        root.add(footer());
+        pack();
     }
 
     private JComponent header() {
@@ -78,10 +76,8 @@ public final class MainWindow extends JFrame {
         var title = new JLabel("●  PULSEFORGE");
         title.setForeground(Theme.TEXT);
         title.setFont(new Font("SansSerif", Font.BOLD, 13));
-        var pin = Theme.button("PIN");
-        pin.setToolTipText("Keep this compact window above other apps");
-        pin.setFont(new Font("SansSerif", Font.BOLD, 10));
-        pin.setBorder(new EmptyBorder(6, 10, 6, 10));
+        var pin = smallButton("PIN");
+        pin.setToolTipText("Keep PulseForge above other apps");
         pin.addActionListener(event -> {
             setAlwaysOnTop(!isAlwaysOnTop());
             pin.setText(isAlwaysOnTop() ? "PINNED" : "PIN");
@@ -90,178 +86,169 @@ public final class MainWindow extends JFrame {
         status.setForeground(Theme.MUTED);
         status.setFont(new Font("SansSerif", Font.BOLD, 9));
         var right = transparent(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        right.add(status); right.add(pin);
+        right.add(status);
+        right.add(pin);
         panel.add(title, BorderLayout.WEST);
         panel.add(right, BorderLayout.EAST);
-        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 32));
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 29));
         return panel;
     }
 
-    private JComponent tempoButtons() {
-        var panel = transparent(new FlowLayout(FlowLayout.CENTER, 8, 0));
+    private JComponent readout() {
+        var panel = new JPanel(new GridLayout(1, 3));
+        panel.setBackground(Theme.PANEL);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(Theme.BORDER), new EmptyBorder(7, 3, 6, 3)));
+        panel.add(readoutCell("TEMPO", bpmValue, tempoName));
+        panel.add(readoutCell("METER", meterValue, mutedLabel("TIME SIGNATURE")));
+        panel.add(readoutCell("RHYTHM", subdivisionValue, mutedLabel("CLICKS PER BEAT")));
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 67));
+        return panel;
+    }
+
+    private JComponent readoutCell(String heading, JLabel value, JLabel detail) {
+        var cell = transparent();
+        cell.setLayout(new BoxLayout(cell, BoxLayout.Y_AXIS));
+        var label = Theme.label(heading);
+        label.setForeground(Theme.ACCENT_2);
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        value.setAlignmentX(Component.CENTER_ALIGNMENT);
+        detail.setAlignmentX(Component.CENTER_ALIGNMENT);
+        cell.add(label);
+        cell.add(Box.createVerticalStrut(2));
+        cell.add(value);
+        cell.add(detail);
+        return cell;
+    }
+
+    private JComponent transportControls() {
+        var row = transparent(new FlowLayout(FlowLayout.CENTER, 7, 0));
         var minus = Theme.button("− 1");
-        var tap = Theme.button("TAP");
+        var tap = Theme.button("TAP TEMPO");
         var plus = Theme.button("+ 1");
         tap.setForeground(Theme.ACCENT);
+        stopButton.setForeground(Theme.WARNING);
+        stopButton.setToolTipText("Stop and reset to beat one (S)");
         minus.addActionListener(event -> state.setBpm(state.get().bpm() - 1));
         plus.addActionListener(event -> state.setBpm(state.get().bpm() + 1));
         tap.addActionListener(event -> tapTempo());
-        panel.add(minus); panel.add(tap); panel.add(plus);
-        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
-        return panel;
+        stopButton.addActionListener(event -> engine.stop());
+        row.add(minus);
+        row.add(tap);
+        row.add(stopButton);
+        row.add(plus);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+        return row;
     }
 
     private JComponent subdivisionPanel() {
-        var outer = transparent(new BorderLayout(0, 6));
-        outer.add(Theme.label("SUBDIVISION"), BorderLayout.NORTH);
+        var panel = transparent(new BorderLayout(0, 5));
+        var title = new JLabel("RHYTHM SUBDIVISION  —  choose clicks per beat");
+        title.setForeground(Theme.MUTED);
+        title.setFont(new Font("SansSerif", Font.BOLD, 10));
+        panel.add(title, BorderLayout.NORTH);
         var row = transparent(new GridLayout(1, Subdivision.values().length, 5, 0));
         var group = new ButtonGroup();
         for (var subdivision : Subdivision.values()) {
-            var button = new JToggleButton(subdivision.symbol());
-            button.setName(subdivision.name());
-            button.setToolTipText(subdivision.label());
+            int clicks = subdivision.stepsPerQuarter();
+            String count = clicks + "×";
+            String label = switch (subdivision) {
+                case QUARTER -> "Quarter";
+                case EIGHTH -> "Eighths";
+                case TRIPLET -> "Triplets";
+                case SIXTEENTH -> "16ths";
+                case SEXTUPLET -> "Sextuplets";
+            };
+            var button = new JToggleButton("<html><center><b>" + count + "</b><br><span style='font-size:8px'>" + label + "</span></center></html>");
+            button.setToolTipText(clicks + (clicks == 1 ? " click" : " clicks") + " per beat — " + subdivision.label());
             button.setFocusPainted(false);
             button.setForeground(Theme.TEXT);
             button.setBackground(Theme.PANEL_LIGHT);
-            button.setFont(new Font("SansSerif", Font.BOLD, subdivision.symbol().length() == 1 ? 17 : 13));
-            button.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(Theme.BORDER), new EmptyBorder(6, 8, 6, 8)));
+            button.setFont(new Font("SansSerif", Font.PLAIN, 11));
+            button.setBorder(BorderFactory.createLineBorder(Theme.BORDER));
+            button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             button.addActionListener(event -> state.setSubdivision(subdivision));
-            group.add(button); row.add(button);
+            subdivisionButtons.put(subdivision, button);
+            group.add(button);
+            row.add(button);
         }
-        outer.add(row, BorderLayout.CENTER);
-        outer.setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
-        return outer;
+        panel.add(row, BorderLayout.CENTER);
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 84));
+        return panel;
     }
 
-    private JComponent settingsPanel() {
-        var panel = new JPanel(new GridBagLayout());
-        panel.setBackground(Theme.PANEL);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(Theme.BORDER), new EmptyBorder(8, 10, 8, 10)));
-        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 160));
-        var c = new GridBagConstraints();
-        c.gridy = 0; c.insets = new Insets(3, 4, 3, 4); c.anchor = GridBagConstraints.WEST;
-
-        c.gridx = 0; panel.add(Theme.label("METER"), c);
-        var beats = new JSpinner(new SpinnerNumberModel(state.get().beatsPerBar(), 1, 12, 1));
-        beats.setName("beats"); styleSpinner(beats);
-        c.gridx = 1; c.fill = GridBagConstraints.HORIZONTAL; c.weightx = .22; panel.add(beats, c);
-        var unit = new JComboBox<>(new Integer[]{4, 8});
-        unit.setName("unit"); Theme.styleInput(unit);
-        c.gridx = 2; c.weightx = .18; panel.add(unit, c);
-        c.gridx = 3; c.weightx = .60; c.gridwidth = 2; panel.add(accentPattern, c);
-
-        c.gridy++; c.gridwidth = 1; c.weightx = 0; c.gridx = 0; panel.add(Theme.label("SWING"), c);
-        swingSlider.setOpaque(false);
-        swingSlider.setForeground(Theme.ACCENT_2);
-        swingSlider.setToolTipText("50% is straight; up to 75% adds swing");
-        c.gridx = 1; c.gridwidth = 3; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; panel.add(swingSlider, c);
-        swingValue.setForeground(Theme.MUTED);
-        swingValue.setFont(new Font("Monospaced", Font.BOLD, 11));
-        c.gridx = 4; c.gridwidth = 1; c.weightx = 0; panel.add(swingValue, c);
-
-        c.gridy++; c.gridx = 0; panel.add(Theme.label("SOUND"), c);
-        Theme.styleInput(soundBox);
-        c.gridx = 1; c.gridwidth = 3; c.weightx = 1; panel.add(soundBox, c);
-        importButton.setFont(new Font("SansSerif", Font.BOLD, 9));
-        importButton.setBorder(new EmptyBorder(7, 9, 7, 9));
-        c.gridx = 4; c.gridwidth = 1; c.weightx = 0; panel.add(importButton, c);
-
-        c.gridy++; c.gridx = 0; panel.add(Theme.label("OUTPUT"), c);
-        var output = new JComboBox<>(AccurateAudioEngine.outputMixerNames().toArray(String[]::new));
-        output.setName("output"); Theme.styleInput(output);
-        c.gridx = 1; c.gridwidth = 3; c.weightx = 1; panel.add(output, c);
-        var volume = new JSlider(0, 100, (int) (state.get().volume() * 100));
-        volume.setName("volume"); volume.setOpaque(false); volume.setToolTipText("Output volume");
-        c.gridx = 4; c.gridwidth = 1; c.weightx = .35; panel.add(volume, c);
-
-        beats.addChangeListener(event -> {
-            if (!syncing) state.setMeter((int) beats.getValue(), (int) unit.getSelectedItem());
-        });
-        unit.addActionListener(event -> {
-            if (!syncing) state.setMeter((int) beats.getValue(), (int) unit.getSelectedItem());
-        });
-        output.addActionListener(event -> {
-            if (!syncing && output.getSelectedItem() != null) {
-                state.setMixerName(output.getSelectedItem().toString());
-                engine.restartForOutputChange();
-            }
-        });
-        volume.addChangeListener(event -> { if (!syncing) state.setVolume(volume.getValue() / 100.0); });
-        state.addListener(settings -> SwingUtilities.invokeLater(() -> {
-            syncing = true;
-            beats.setValue(settings.beatsPerBar());
-            unit.setSelectedItem(settings.beatUnit());
-            if (!settings.mixerName().equals(output.getSelectedItem())) output.setSelectedItem(settings.mixerName());
-            volume.setValue((int) Math.round(settings.volume() * 100));
-            syncing = false;
-        }));
+    private JComponent footer() {
+        var panel = transparent(new BorderLayout(8, 0));
+        settingsSummary.setForeground(Theme.MUTED);
+        settingsSummary.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        var settingsButton = Theme.button("⚙  SOUND & SETTINGS");
+        settingsButton.setFont(new Font("SansSerif", Font.BOLD, 10));
+        settingsButton.addActionListener(event -> settingsDialog.open());
+        panel.add(settingsSummary, BorderLayout.CENTER);
+        panel.add(settingsButton, BorderLayout.EAST);
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 34));
         return panel;
     }
 
     private void wireEvents() {
         tempoWheel.setChangeListener(state::setBpm);
-        accentPattern.setClickListener(state::cycleAccent);
-        playButton.addActionListener(event -> engine.toggle());
-        swingSlider.addChangeListener(event -> {
-            if (!syncing) state.setSwing(swingSlider.getValue() / 100.0);
-        });
-        soundBox.addActionListener(event -> {
-            if (syncing) return;
-            var selected = (SoundType) soundBox.getSelectedItem();
-            if (selected == SoundType.CUSTOM && state.get().customSamplePath().isBlank()) importSample();
-            else if (selected != null) state.setSound(selected);
-        });
-        importButton.addActionListener(event -> importSample());
+        tempoWheel.setTransportAction(engine::togglePlayPause);
         engine.addPulseListener(visualizer::pulse);
-        engine.addPlayListener(playing -> {
-            visualizer.setPlaying(playing);
-            playButton.setText(playing ? "■  STOP" : "▶  START");
-            playButton.setBackground(playing ? Theme.WARNING : Theme.ACCENT);
-            status.setText(playing ? "LOCKED" : engine.errorMessage().isBlank() ? "SPACE TO START" : "AUDIO ERROR");
-            status.setForeground(playing ? Theme.ACCENT : engine.errorMessage().isBlank() ? Theme.MUTED : Theme.WARNING);
-        });
+        engine.addTransportListener(this::updateTransport);
         state.addListener(settings -> SwingUtilities.invokeLater(() -> syncFromState(settings)));
 
         var root = getRootPane();
-        root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke("SPACE"), "toggle");
+        root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke("SPACE"), "playPause");
         root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke('T'), "tap");
+        root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke('S'), "stop");
         root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke("LEFT"), "slower");
         root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke("RIGHT"), "faster");
-        root.getActionMap().put("toggle", action(() -> engine.toggle()));
+        root.getActionMap().put("playPause", action(engine::togglePlayPause));
         root.getActionMap().put("tap", action(this::tapTempo));
+        root.getActionMap().put("stop", action(engine::stop));
         root.getActionMap().put("slower", action(() -> state.setBpm(state.get().bpm() - 1)));
         root.getActionMap().put("faster", action(() -> state.setBpm(state.get().bpm() + 1)));
         addWindowListener(new WindowAdapter() {
-            @Override public void windowClosed(WindowEvent event) { engine.close(); }
+            @Override public void windowClosed(WindowEvent event) {
+                settingsDialog.dispose();
+                engine.close();
+            }
         });
     }
 
     private void syncFromState(MetronomeSettings settings) {
-        syncing = true;
         tempoWheel.setBpm(settings.bpm());
         visualizer.setBeatCount(settings.beatsPerBar());
         visualizer.setBeatPeriod(settings.quarterNoteBpm());
-        accentPattern.setAccents(settings.accents());
-        swingSlider.setValue((int) Math.round(settings.swing() * 100));
-        swingSlider.setEnabled(settings.subdivision().stepsPerQuarter() > 1
-                && settings.subdivision().stepsPerQuarter() % 2 == 0);
-        swingValue.setText((int) Math.round(settings.swing() * 100) + "%");
-        soundBox.setSelectedItem(settings.sound());
-        importButton.setForeground(settings.sound() == SoundType.CUSTOM ? Theme.ACCENT : Theme.TEXT);
-        findButtons(getContentPane(), settings.subdivision());
-        syncing = false;
+        bpmValue.setText(formatBpm(settings.bpm()));
+        tempoName.setText(tempoName(settings.bpm()).toUpperCase());
+        tempoName.setForeground(Theme.MUTED);
+        tempoName.setFont(new Font("SansSerif", Font.BOLD, 8));
+        meterValue.setText(settings.beatsPerBar() + "/" + settings.beatUnit());
+        subdivisionValue.setText(settings.subdivision().stepsPerQuarter() + "× " + shortSubdivision(settings.subdivision()));
+        settingsSummary.setText(settings.sound() + "   ·   Volume " + (int) Math.round(settings.volume() * 100) + "%");
+        subdivisionButtons.forEach((subdivision, button) -> {
+            boolean selected = subdivision == settings.subdivision();
+            button.setSelected(selected);
+            button.setBackground(selected ? Theme.ACCENT_2 : Theme.PANEL_LIGHT);
+            button.setForeground(selected ? Color.WHITE : Theme.TEXT);
+        });
     }
 
-    private static void findButtons(Container parent, Subdivision selected) {
-        for (var component : parent.getComponents()) {
-            if (component instanceof JToggleButton button && selected.name().equals(button.getName())) {
-                button.setSelected(true);
-                button.setBackground(Theme.ACCENT_2);
-            } else if (component instanceof JToggleButton button) button.setBackground(Theme.PANEL_LIGHT);
-            if (component instanceof Container container) findButtons(container, selected);
-        }
+    private void updateTransport(TransportState value) {
+        tempoWheel.setTransportState(value);
+        visualizer.setPlaying(value == TransportState.PLAYING);
+        stopButton.setEnabled(value != TransportState.STOPPED);
+        status.setText(switch (value) {
+            case PLAYING -> "PLAYING";
+            case PAUSED -> "PAUSED";
+            case STOPPED -> engine.errorMessage().isBlank() ? "READY" : "AUDIO ERROR";
+        });
+        status.setForeground(switch (value) {
+            case PLAYING -> Theme.ACCENT;
+            case PAUSED -> Theme.WARNING;
+            case STOPPED -> engine.errorMessage().isBlank() ? Theme.MUTED : Theme.WARNING;
+        });
     }
 
     private void tapTempo() {
@@ -276,49 +263,67 @@ public final class MainWindow extends JFrame {
         }
     }
 
-    private void importSample() {
-        var start = new File("/Users/dhrus/Music/Garageband projects ");
-        if (!start.isDirectory()) start = new File(System.getProperty("user.home"), "Music");
-        var chooser = new JFileChooser(start);
-        chooser.setDialogTitle("Choose a GarageBand drum recording");
-        chooser.setFileFilter(new FileNameExtensionFilter("Audio files (WAV, AIFF, AIF)", "wav", "aiff", "aif"));
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
-        var file = chooser.getSelectedFile();
-        status.setText("ANALYZING SAMPLE…");
-        CompletableFuture.runAsync(() -> engine.prepareCustomSample(file.getAbsolutePath()))
-                .thenRun(() -> SwingUtilities.invokeLater(() -> {
-                    if (engine.customSampleLoaded()) {
-                        state.setCustomSamplePath(file.getAbsolutePath());
-                        status.setText("SAMPLE READY");
-                        if (engine.isPlaying()) engine.restartForOutputChange();
-                    } else {
-                        status.setText("SAMPLE ERROR");
-                        JOptionPane.showMessageDialog(this,
-                                "That recording could not be decoded. Try a PCM WAV or AIFF file.",
-                                "Could not import sample", JOptionPane.WARNING_MESSAGE);
-                        syncFromState(state.get());
-                    }
-                }));
+    private static String formatBpm(double bpm) {
+        return bpm == Math.rint(bpm) ? Integer.toString((int) bpm) : String.format("%.1f", bpm);
     }
 
+    private static String shortSubdivision(Subdivision subdivision) {
+        return switch (subdivision) {
+            case QUARTER -> "Quarter";
+            case EIGHTH -> "Eighths";
+            case TRIPLET -> "Triplets";
+            case SIXTEENTH -> "16ths";
+            case SEXTUPLET -> "Sextuplets";
+        };
+    }
+
+    private static String tempoName(double bpm) {
+        if (bpm < 40) return "Grave";
+        if (bpm < 60) return "Largo";
+        if (bpm < 76) return "Adagio";
+        if (bpm < 108) return "Andante";
+        if (bpm < 120) return "Moderato";
+        if (bpm < 168) return "Allegro";
+        if (bpm < 200) return "Presto";
+        return "Prestissimo";
+    }
+
+    private static JLabel valueLabel(int size) {
+        var label = new JLabel();
+        label.setForeground(Theme.TEXT);
+        label.setFont(new Font("SansSerif", Font.BOLD, size));
+        return label;
+    }
+
+    private static JLabel mutedLabel(String text) {
+        var label = new JLabel(text);
+        label.setForeground(Theme.MUTED);
+        label.setFont(new Font("SansSerif", Font.BOLD, 8));
+        return label;
+    }
+
+    private static JButton smallButton(String text) {
+        var button = Theme.button(text);
+        button.setFont(new Font("SansSerif", Font.BOLD, 10));
+        button.setBorder(new EmptyBorder(6, 10, 6, 10));
+        return button;
+    }
+
+    private static JPanel transparent() { return transparent(new FlowLayout()); }
     private static JPanel transparent(LayoutManager layout) {
-        var panel = new JPanel(layout); panel.setOpaque(false); return panel;
+        var panel = new JPanel(layout);
+        panel.setOpaque(false);
+        return panel;
     }
 
     private static void center(JPanel parent, JComponent component) {
-        component.setAlignmentX(Component.CENTER_ALIGNMENT); parent.add(component);
-    }
-
-    private static void styleSpinner(JSpinner spinner) {
-        Theme.styleInput(spinner);
-        if (spinner.getEditor() instanceof JSpinner.DefaultEditor editor) {
-            editor.getTextField().setForeground(Theme.TEXT);
-            editor.getTextField().setBackground(Theme.PANEL_LIGHT);
-            editor.getTextField().setHorizontalAlignment(SwingConstants.CENTER);
-        }
+        component.setAlignmentX(Component.CENTER_ALIGNMENT);
+        parent.add(component);
     }
 
     private static Action action(Runnable runnable) {
-        return new AbstractAction() { @Override public void actionPerformed(ActionEvent event) { runnable.run(); }};
+        return new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) { runnable.run(); }
+        };
     }
 }

@@ -16,7 +16,8 @@ final class BeatVisualizer extends JComponent {
     private long beatPeriodNanos = 500_000_000L;
 
     BeatVisualizer() {
-        setPreferredSize(new Dimension(380, 78));
+        setPreferredSize(new Dimension(380, 58));
+        setMaximumSize(getPreferredSize());
         var timer = new Timer(16, event -> { if (playing) repaint(); });
         timer.start();
     }
@@ -31,12 +32,12 @@ final class BeatVisualizer extends JComponent {
     @Override protected void paintComponent(Graphics graphics) {
         var g = (Graphics2D) graphics.create();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        int w = getWidth(), center = w / 2;
+        int w = getWidth(), h = getHeight(), center = w / 2;
         double elapsed = Math.max(0, System.nanoTime() - pulseNanos);
         double phase = Math.min(1, elapsed / (double) beatPeriodNanos);
         double direction = activeBeat % 2 == 0 ? -1 : 1;
         double angle = playing ? direction * (.72 - phase * 1.44) : 0;
-        int pivotY = 12, length = 35;
+        int pivotY = 7, length = 27;
         int ballX = center + (int) (Math.sin(angle) * length);
         int ballY = pivotY + (int) (Math.cos(angle) * length);
         g.setStroke(new BasicStroke(2.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
@@ -54,7 +55,7 @@ final class BeatVisualizer extends JComponent {
             int d = active && subdivision == 0 ? dot + 4 : dot;
             int dx = start + i * (dot + gap) + (dot - d) / 2;
             g.setColor(active ? (i == 0 ? Theme.WARNING : Theme.ACCENT) : Theme.BORDER);
-            g.fill(new Ellipse2D.Double(dx, 61 - d / 2.0, d, d));
+            g.fill(new Ellipse2D.Double(dx, h - 10 - d / 2.0, d, d));
         }
         g.dispose();
     }

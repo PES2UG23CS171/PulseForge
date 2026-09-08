@@ -23,41 +23,62 @@ public final class AccurateAudioEngine implements AutoCloseable {
     private final AtomicBoolean playing = new AtomicBoolean();
     private final List<Consumer<BeatPulse>> pulseListeners = new CopyOnWriteArrayList<>();
     private final List<Consumer<Boolean>> playListeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<TransportState>> transportListeners = new CopyOnWriteArrayList<>();
     private volatile Thread audioThread;
     private volatile String errorMessage = "";
+    private volatile TransportState transportState = TransportState.STOPPED;
+    private volatile long resumeSequence;
+    private volatile long startSequence;
 
     public AccurateAudioEngine(MetronomeState state) { this.state = state; }
 
     public boolean isPlaying() { return playing.get(); }
+    public boolean isPaused() { return transportState == TransportState.PAUSED; }
+    public TransportState transportState() { return transportState; }
     public String errorMessage() { return errorMessage; }
     public boolean customSampleLoaded() { return samples.customSampleLoaded(); }
     public void prepareCustomSample(String path) { samples.load(path); }
     public void addPulseListener(Consumer<BeatPulse> listener) { pulseListeners.add(listener); }
     public void addPlayListener(Consumer<Boolean> listener) { playListeners.add(listener); }
+    public void addTransportListener(Consumer<TransportState> listener) { transportListeners.add(listener); }
 
-    public synchronized void start() {
+    public synchronized void play() {
         if (!playing.compareAndSet(false, true)) return;
         errorMessage = "";
+        startSequence = transportState == TransportState.PAUSED ? resumeSequence : 0;
+        transportState = TransportState.PLAYING;
         audioThread = new Thread(this::renderLoop, "pulseforge-realtime-audio");
         audioThread.setDaemon(true);
         audioThread.setPriority(Thread.MAX_PRIORITY);
         audioThread.start();
-        notifyPlaying(true);
+        notifyTransport(TransportState.PLAYING);
+    }
+
+    public synchronized void pause() {
+        if (!playing.compareAndSet(true, false)) return;
+        transportState = TransportState.PAUSED;
+        var thread = audioThread;
+        if (thread != null) thread.interrupt();
+        notifyTransport(TransportState.PAUSED);
     }
 
     public synchronized void stop() {
-        if (!playing.compareAndSet(true, false)) return;
+        playing.set(false);
+        transportState = TransportState.STOPPED;
+        resumeSequence = 0;
         var thread = audioThread;
         if (thread != null) thread.interrupt();
-        notifyPlaying(false);
+        notifyTransport(TransportState.STOPPED);
     }
 
-    public void toggle() { if (isPlaying()) stop(); else start(); }
+    public void start() { play(); }
+    public void toggle() { togglePlayPause(); }
+    public void togglePlayPause() { if (isPlaying()) pause(); else play(); }
 
     public void restartForOutputChange() {
         if (!isPlaying()) return;
         stop();
-        var timer = new Timer(80, event -> start());
+        var timer = new Timer(80, event -> play());
         timer.setRepeats(false);
         timer.start();
     }
@@ -81,7 +102,7 @@ public final class AccurateAudioEngine implements AutoCloseable {
             line.start();
             long streamFrame = 0;
             double nextEventFrame = 0;
-            long sequence = 0;
+            long sequence = startSequence;
             long seenVersion = state.structureVersion();
             var voices = new ArrayList<Voice>();
             byte[] pcm = new byte[CHUNK_FRAMES * 2];
@@ -91,6 +112,7 @@ public final class AccurateAudioEngine implements AutoCloseable {
                 long version = state.structureVersion();
                 if (version != seenVersion) {
                     sequence = 0;
+                    resumeSequence = 0;
                     nextEventFrame = streamFrame;
                     voices.clear();
                     seenVersion = version;
@@ -104,6 +126,7 @@ public final class AccurateAudioEngine implements AutoCloseable {
                     notifyPulse(settings, sequence, line);
                     nextEventFrame += intervalFrames(settings, sequence);
                     sequence++;
+                    resumeSequence = sequence;
                 }
                 mixVoices(pcm, voices, settings.volume());
                 int written = 0;
@@ -115,7 +138,9 @@ public final class AccurateAudioEngine implements AutoCloseable {
         } catch (Exception exception) {
             errorMessage = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
             playing.set(false);
-            notifyPlaying(false);
+            transportState = TransportState.STOPPED;
+            resumeSequence = 0;
+            notifyTransport(TransportState.STOPPED);
         } finally {
             if (line != null) {
                 line.stop();
@@ -192,8 +217,11 @@ public final class AccurateAudioEngine implements AutoCloseable {
         timer.start();
     }
 
-    private void notifyPlaying(boolean value) {
-        SwingUtilities.invokeLater(() -> playListeners.forEach(listener -> listener.accept(value)));
+    private void notifyTransport(TransportState value) {
+        SwingUtilities.invokeLater(() -> {
+            transportListeners.forEach(listener -> listener.accept(value));
+            playListeners.forEach(listener -> listener.accept(value == TransportState.PLAYING));
+        });
     }
 
     @Override public void close() { stop(); }

@@ -16,6 +16,8 @@ like any other Mac app.
 - WAV/AIFF GarageBand recording import with automatic transient extraction
 - Audio output and volume selection
 - Latency-compensated beat lights and animated pendulum
+- Large center Play/Pause control plus a separate Stop-and-reset button
+- Plain-language subdivision choices showing 1×, 2×, 3×, 4×, or 6× clicks per beat
 - Always-on-top compact mode and persistent settings
 
 ## Open the app
@@ -23,8 +25,8 @@ like any other Mac app.
 After packaging, double-click `dist/PulseForge.app` in Finder. The app is self-contained;
 the machine does not need a separate Java installation to run it.
 
-Keyboard controls: `Space` starts/stops, `T` taps tempo, and the left/right arrow keys
-adjust BPM.
+Keyboard controls: `Space` plays/pauses, `S` stops and resets, `T` taps tempo, and the
+left/right arrow keys adjust BPM.
 
 ## Build and package
 
