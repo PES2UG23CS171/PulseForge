@@ -1,24 +1,36 @@
 package app.pulseforge.model;
 
+/** Division of one time-signature beat; each beat can choose a different division. */
 public enum Subdivision {
-    QUARTER("Quarter", "♩", 1),
-    EIGHTH("Eighths", "♪", 2),
-    TRIPLET("Triplets", "3", 3),
-    SIXTEENTH("Sixteenths", "♬", 4),
-    SEXTUPLET("Sextuplets", "6", 6);
+    QUARTER(1), EIGHTH(2), TRIPLET(3), SIXTEENTH(4), SEXTUPLET(6), THIRTY_SECOND(8);
 
-    private final String label;
-    private final String symbol;
-    private final int stepsPerQuarter;
+    private final int steps;
+    Subdivision(int steps) { this.steps = steps; }
+    public int steps() { return steps; }
 
-    Subdivision(String label, String symbol, int stepsPerQuarter) {
-        this.label = label;
-        this.symbol = symbol;
-        this.stepsPerQuarter = stepsPerQuarter;
+    public String label(int beatUnit) {
+        if (this == TRIPLET) return "Triplet";
+        if (this == SEXTUPLET) return "Sextuplet";
+        return switch (beatUnit * steps) {
+            case 1 -> "Semibreve";
+            case 2 -> "Minim";
+            case 4 -> "Crotchet";
+            case 8 -> "Quavers";
+            case 16 -> "Semiquavers";
+            case 32 -> "Demisemiquavers";
+            default -> steps + " even notes";
+        };
     }
 
-    public String label() { return label; }
-    public String symbol() { return symbol; }
-    public int stepsPerQuarter() { return stepsPerQuarter; }
-    @Override public String toString() { return label; }
+    public String count(int beat, int step) {
+        String number = Integer.toString(beat + 1);
+        return switch (this) {
+            case QUARTER -> number;
+            case EIGHTH -> step == 0 ? number : "&";
+            case TRIPLET -> new String[]{number, "trip", "let"}[step];
+            case SIXTEENTH -> new String[]{number, "e", "&", "a"}[step];
+            case SEXTUPLET -> new String[]{number, "trip", "let", "&", "trip", "let"}[step];
+            case THIRTY_SECOND -> step == 0 ? number : Integer.toString(step + 1);
+        };
+    }
 }

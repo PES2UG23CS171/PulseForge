@@ -12,8 +12,8 @@ import java.util.Random;
 final class ClickSamples {
     private static final int RATE = AccurateAudioEngine.SAMPLE_RATE;
     private final Map<SoundType, SampleSet> generated = new EnumMap<>(SoundType.class);
-    private volatile String loadedPath = "";
-    private volatile SampleSet custom;
+    private volatile CachedSample custom;
+    private volatile boolean lastLoadSucceeded;
 
     ClickSamples() {
         generated.put(SoundType.STUDIO, tones(1900, 1250, 830, .036, .992));
@@ -24,30 +24,31 @@ final class ClickSamples {
 
     SampleSet get(SoundType type, String path) {
         if (type == SoundType.CUSTOM && path != null && !path.isBlank()) {
-            if (!path.equals(loadedPath)) load(path);
-            if (custom != null) return custom;
+            var cached = custom;
+            if (cached != null && path.equals(cached.path())) return cached.samples();
         }
         return generated.getOrDefault(type, generated.get(SoundType.STUDIO));
     }
 
     synchronized void load(String path) {
-        if (path.equals(loadedPath)) return;
-        loadedPath = path;
-        custom = null;
+        if (custom != null && path.equals(custom.path())) { lastLoadSucceeded = true; return; }
+        lastLoadSucceeded = false;
         try (AudioInputStream source = AudioSystem.getAudioInputStream(new File(path))) {
             var targetFormat = new AudioFormat(AudioFormat.Encoding.PCM_SIGNED, RATE, 16, 1, 2, RATE, false);
             try (AudioInputStream pcm = AudioSystem.getAudioInputStream(targetFormat, source)) {
                 byte[] bytes = readLimited(pcm, RATE * 2 * 45);
                 float[] all = decode(bytes);
                 float[] hit = extractTransient(all);
-                custom = new SampleSet(scalePitch(hit, 1.10), hit, scalePitch(hit, .86));
+                custom = new CachedSample(path, new SampleSet(scalePitch(hit, 1.10), hit, scalePitch(hit, .86)));
+                lastLoadSucceeded = true;
             }
         } catch (Exception ignored) {
             // UI displays a fallback indicator through customSampleLoaded().
         }
     }
 
-    boolean customSampleLoaded() { return custom != null; }
+    boolean customSampleLoaded() { return lastLoadSucceeded; }
+    private record CachedSample(String path, SampleSet samples) {}
 
     private static byte[] readLimited(AudioInputStream in, int limit) throws Exception {
         var out = new ByteArrayOutputStream(Math.min(limit, RATE * 10));

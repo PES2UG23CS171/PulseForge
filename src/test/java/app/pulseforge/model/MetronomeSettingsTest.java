@@ -1,22 +1,58 @@
 package app.pulseforge.model;
 
 import org.junit.jupiter.api.Test;
-
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 class MetronomeSettingsTest {
-    @Test
-    void valuesAreClampedToSafeProfessionalRanges() {
-        var settings = new MetronomeSettings(900, Subdivision.QUARTER, 50, 3, -2,
-                SoundType.STUDIO, .99, null, null, List.of(Accent.STRONG));
-        assertEquals(300, settings.bpm());
-        assertEquals(12, settings.beatsPerBar());
-        assertEquals(4, settings.beatUnit());
-        assertEquals(0, settings.volume());
-        assertEquals(.75, settings.swing());
-        assertEquals("System Default", settings.mixerName());
-        assertEquals("", settings.customSamplePath());
+    @Test void valuesAndPatternLengthsAreNormalized() {
+        var s = new MetronomeSettings(900, 50, 3, -2, SoundType.STUDIO, .99,
+                null, null, List.of(Accent.MUTED), List.of(BeatPattern.all(Subdivision.TRIPLET)));
+        assertEquals(300, s.bpm());
+        assertEquals(12, s.beatsPerBar());
+        assertEquals(4, s.beatUnit());
+        assertEquals(0, s.volume());
+        assertEquals(.75, s.swing());
+        assertEquals(12, s.accents().size());
+        assertEquals(12, s.patterns().size());
+        assertEquals(Accent.MUTED, s.accents().getFirst());
+        assertEquals(Subdivision.TRIPLET, s.patterns().getFirst().division());
+        assertEquals(Subdivision.QUARTER, s.patterns().getLast().division());
+    }
+
+    @Test void beatEditsAreIndependentAndSurviveReload() {
+        var prefs = new MemoryPreferences();
+        var state = new MetronomeState(prefs);
+        state.setPattern(0, Subdivision.TRIPLET);
+        state.setPattern(2, Subdivision.SIXTEENTH);
+        state.toggleHit(2, 1);
+        state.setMeter(4, 32);
+        var loaded = new MetronomeState(prefs).get();
+        assertEquals(32, loaded.beatUnit());
+        assertEquals(Subdivision.TRIPLET, loaded.patterns().get(0).division());
+        assertEquals(Subdivision.QUARTER, loaded.patterns().get(1).division());
+        assertEquals(List.of(true, false, true, true), loaded.patterns().get(2).hits());
+        assertEquals(Subdivision.QUARTER, loaded.patterns().get(3).division());
+    }
+
+    @Test void shrinkingThenExpandingKeepsSurvivorsAndCreatesStraightNewBeats() {
+        var state = new MetronomeState(new MemoryPreferences());
+        state.setPattern(0, Subdivision.TRIPLET);
+        state.setPattern(3, Subdivision.SEXTUPLET);
+        state.setMeter(2, 16);
+        state.setMeter(6, 2);
+        assertEquals(Subdivision.TRIPLET, state.get().patterns().getFirst().division());
+        assertEquals(Subdivision.QUARTER, state.get().patterns().get(3).division());
+        assertEquals(6, state.get().accents().size());
+    }
+
+    @Test void oldGlobalRhythmPreferencesMigrateToEachBeat() {
+        var prefs = new MemoryPreferences();
+        prefs.put("subdivision", "EIGHTH");
+        prefs.putInt("unit", 8);
+        var state = new MetronomeState(prefs);
+        assertTrue(state.get().patterns().stream().allMatch(p -> p.division() == Subdivision.EIGHTH));
+        state.setPattern(0, Subdivision.TRIPLET);
+        assertEquals(Subdivision.TRIPLET, new MetronomeState(prefs).get().patterns().getFirst().division());
     }
 }

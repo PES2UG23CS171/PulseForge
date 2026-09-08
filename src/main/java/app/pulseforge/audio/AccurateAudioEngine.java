@@ -1,86 +1,84 @@
 package app.pulseforge.audio;
 
 import app.pulseforge.model.Accent;
-import app.pulseforge.model.MetronomeSettings;
 import app.pulseforge.model.MetronomeState;
-
+import app.pulseforge.model.SoundType;
 import javax.sound.sampled.*;
-import javax.swing.*;
+import javax.swing.SwingUtilities;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.ArrayDeque;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.*;
 import java.util.function.Consumer;
 
 public final class AccurateAudioEngine implements AutoCloseable {
     public static final int SAMPLE_RATE = 48_000;
-    private static final int CHUNK_FRAMES = 128;
+    private static final int CHUNK_FRAMES = 256;
     private static final AudioFormat FORMAT = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
-
     private final MetronomeState state;
     private final ClickSamples samples = new ClickSamples();
-    private final AtomicBoolean playing = new AtomicBoolean();
-    private final List<Consumer<BeatPulse>> pulseListeners = new CopyOnWriteArrayList<>();
-    private final List<Consumer<Boolean>> playListeners = new CopyOnWriteArrayList<>();
-    private final List<Consumer<TransportState>> transportListeners = new CopyOnWriteArrayList<>();
-    private volatile Thread audioThread;
+    // A single worker serializes device close/open even during rapid play/pause clicks.
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(task -> {
+        var thread = new Thread(task, "pulseforge-audio");
+        thread.setDaemon(true);
+        thread.setPriority(Thread.MAX_PRIORITY);
+        return thread;
+    });
+    private final List<Consumer<TransportState>> listeners = new CopyOnWriteArrayList<>();
+    private volatile TransportState transport = TransportState.STOPPED;
+    private volatile long generation;
     private volatile String errorMessage = "";
-    private volatile TransportState transportState = TransportState.STOPPED;
-    private volatile long resumeSequence;
-    private volatile long startSequence;
+    private volatile Session session;
+    private BeatClock.Position paused = BeatClock.Position.beginning();
+    private boolean closed;
 
     public AccurateAudioEngine(MetronomeState state) { this.state = state; }
-
-    public boolean isPlaying() { return playing.get(); }
-    public boolean isPaused() { return transportState == TransportState.PAUSED; }
-    public TransportState transportState() { return transportState; }
+    public boolean isPlaying() { return transport == TransportState.PLAYING; }
+    public boolean isPaused() { return transport == TransportState.PAUSED; }
+    public TransportState transportState() { return transport; }
     public String errorMessage() { return errorMessage; }
     public boolean customSampleLoaded() { return samples.customSampleLoaded(); }
     public void prepareCustomSample(String path) { samples.load(path); }
-    public void addPulseListener(Consumer<BeatPulse> listener) { pulseListeners.add(listener); }
-    public void addPlayListener(Consumer<Boolean> listener) { playListeners.add(listener); }
-    public void addTransportListener(Consumer<TransportState> listener) { transportListeners.add(listener); }
+    public void addTransportListener(Consumer<TransportState> listener) { listeners.add(listener); }
 
     public synchronized void play() {
-        if (!playing.compareAndSet(false, true)) return;
+        if (closed || isPlaying()) return;
+        long token = ++generation;
+        var start = paused;
+        session = null;
         errorMessage = "";
-        startSequence = transportState == TransportState.PAUSED ? resumeSequence : 0;
-        transportState = TransportState.PLAYING;
-        audioThread = new Thread(this::renderLoop, "pulseforge-realtime-audio");
-        audioThread.setDaemon(true);
-        audioThread.setPriority(Thread.MAX_PRIORITY);
-        audioThread.start();
-        notifyTransport(TransportState.PLAYING);
+        transport = TransportState.PLAYING;
+        notifyTransport(token);
+        worker.submit(() -> renderLoop(token, start));
     }
 
     public synchronized void pause() {
-        if (!playing.compareAndSet(true, false)) return;
-        transportState = TransportState.PAUSED;
-        var thread = audioThread;
-        if (thread != null) thread.interrupt();
-        notifyTransport(TransportState.PAUSED);
+        if (!isPlaying()) return;
+        paused = position();
+        transport = TransportState.PAUSED;
+        long token = ++generation;
+        notifyTransport(token);
     }
 
     public synchronized void stop() {
-        playing.set(false);
-        transportState = TransportState.STOPPED;
-        resumeSequence = 0;
-        var thread = audioThread;
-        if (thread != null) thread.interrupt();
-        notifyTransport(TransportState.STOPPED);
+        paused = BeatClock.Position.beginning();
+        transport = TransportState.STOPPED;
+        long token = ++generation;
+        notifyTransport(token);
     }
 
-    public void start() { play(); }
-    public void toggle() { togglePlayPause(); }
     public void togglePlayPause() { if (isPlaying()) pause(); else play(); }
 
-    public void restartForOutputChange() {
-        if (!isPlaying()) return;
-        stop();
-        var timer = new Timer(80, event -> play());
-        timer.setRepeats(false);
-        timer.start();
+    public synchronized void restartForOutputChange() {
+        if (isPlaying()) { pause(); play(); }
+    }
+
+    /** Uses the device's consumed-frame counter, never the render thread's wall clock. */
+    public synchronized BeatClock.Position position() {
+        var active = session;
+        if (!isPlaying() || active == null || active.token != generation) return paused;
+        long frame = active.line.getLongFramePosition();
+        return active.position(frame);
     }
 
     public static List<String> outputMixerNames() {
@@ -90,57 +88,62 @@ public final class AccurateAudioEngine implements AutoCloseable {
         for (var mixerInfo : AudioSystem.getMixerInfo()) {
             try {
                 if (AudioSystem.getMixer(mixerInfo).isLineSupported(info)) names.add(mixerInfo.getName());
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) { }
         }
         return names;
     }
 
-    private void renderLoop() {
+    private boolean current(long token) { return generation == token && isPlaying(); }
+
+    private void renderLoop(long token, BeatClock.Position start) {
         SourceDataLine line = null;
         try {
-            line = openLine(state.get().mixerName());
-            line.start();
-            long streamFrame = 0;
-            double nextEventFrame = 0;
-            long sequence = startSequence;
-            long seenVersion = state.structureVersion();
+            if (!current(token)) return;
+            var settings = state.get();
+            // Decode user audio before playback, not inside the render loop.
+            if (settings.sound() == SoundType.CUSTOM && !settings.customSamplePath().isBlank())
+                samples.load(settings.customSamplePath());
+            line = openLine(settings.mixerName());
+            var clock = new BeatClock(SAMPLE_RATE, settings, start);
+            var active = new Session(token, line, clock.anchor());
+            if (!current(token)) return;
+            session = active;
             var voices = new ArrayList<Voice>();
             byte[] pcm = new byte[CHUNK_FRAMES * 2];
-
-            while (playing.get() && !Thread.currentThread().isInterrupted()) {
-                var settings = state.get();
-                long version = state.structureVersion();
-                if (version != seenVersion) {
-                    sequence = 0;
-                    resumeSequence = 0;
-                    nextEventFrame = streamFrame;
-                    voices.clear();
-                    seenVersion = version;
+            boolean started = false;
+            while (current(token)) {
+                settings = state.get();
+                long frameStart = clock.cursor();
+                var bank = samples.get(settings.sound(), settings.customSamplePath());
+                for (var event : clock.advance(CHUNK_FRAMES, settings)) {
+                    active.add(event);
+                    if (event.audible()) {
+                        float[] data = event.step() > 0 ? bank.subdivision()
+                                : event.accent() == Accent.STRONG ? bank.accent() : bank.normal();
+                        float gain = event.step() > 0 ? .48f : event.accent() == Accent.STRONG ? 1f : .76f;
+                        voices.add(new Voice(data, -(int) (event.frame() - frameStart), gain));
+                    }
                 }
-
-                Arrays.fill(pcm, (byte) 0);
-                double chunkEnd = streamFrame + CHUNK_FRAMES;
-                while (nextEventFrame < chunkEnd) {
-                    int offset = Math.max(0, (int) Math.round(nextEventFrame - streamFrame));
-                    scheduleVoice(settings, sequence, offset, voices);
-                    notifyPulse(settings, sequence, line);
-                    nextEventFrame += intervalFrames(settings, sequence);
-                    sequence++;
-                    resumeSequence = sequence;
-                }
+                // Drain consumed events even when the window is hidden.
+                active.position(line.getLongFramePosition());
                 mixVoices(pcm, voices, settings.volume());
                 int written = 0;
-                while (written < pcm.length && playing.get()) {
-                    written += line.write(pcm, written, pcm.length - written);
+                while (written < pcm.length && current(token)) {
+                    int count = line.write(pcm, written, pcm.length - written);
+                    if (count <= 0) throw new LineUnavailableException("The audio output stopped accepting data.");
+                    written += count;
+                    if (!started) { line.start(); started = true; }
                 }
-                streamFrame += CHUNK_FRAMES;
             }
-        } catch (Exception exception) {
-            errorMessage = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
-            playing.set(false);
-            transportState = TransportState.STOPPED;
-            resumeSequence = 0;
-            notifyTransport(TransportState.STOPPED);
+        } catch (Exception error) {
+            synchronized (this) {
+                if (current(token)) {
+                    errorMessage = error.getMessage() == null ? "Audio output unavailable" : error.getMessage();
+                    transport = TransportState.STOPPED;
+                    paused = BeatClock.Position.beginning();
+                    notifyTransport(token);
+                }
+            }
         } finally {
             if (line != null) {
                 line.stop();
@@ -155,37 +158,16 @@ public final class AccurateAudioEngine implements AutoCloseable {
         SourceDataLine line = null;
         if (!"System Default".equals(selected)) {
             for (var mixerInfo : AudioSystem.getMixerInfo()) {
-                if (mixerInfo.getName().equals(selected)) {
-                    var mixer = AudioSystem.getMixer(mixerInfo);
-                    if (mixer.isLineSupported(info)) line = (SourceDataLine) mixer.getLine(info);
+                if (mixerInfo.getName().equals(selected) && AudioSystem.getMixer(mixerInfo).isLineSupported(info)) {
+                    line = (SourceDataLine) AudioSystem.getMixer(mixerInfo).getLine(info);
                     break;
                 }
             }
+            if (line == null) throw new LineUnavailableException("Selected output is disconnected. Choose an output in Sound settings.");
         }
         if (line == null) line = (SourceDataLine) AudioSystem.getLine(info);
         line.open(FORMAT, CHUNK_FRAMES * 2 * 8);
         return line;
-    }
-
-    private void scheduleVoice(MetronomeSettings settings, long sequence, int offset, List<Voice> voices) {
-        int steps = settings.subdivision().stepsPerQuarter();
-        int sub = (int) (sequence % steps);
-        int beat = (int) ((sequence / steps) % settings.beatsPerBar());
-        Accent accent = settings.accents().get(beat);
-        if (sub == 0 && accent == Accent.MUTED) return;
-        var set = samples.get(settings.sound(), settings.customSamplePath());
-        float[] data = sub != 0 ? set.subdivision() : accent == Accent.STRONG ? set.accent() : set.normal();
-        float gain = sub != 0 ? .48f : accent == Accent.STRONG ? 1f : .76f;
-        voices.add(new Voice(data, -offset, gain));
-    }
-
-    static double intervalFrames(MetronomeSettings settings, long sequence) {
-        int steps = settings.subdivision().stepsPerQuarter();
-        double nominal = SAMPLE_RATE * 60.0 / settings.quarterNoteBpm() / steps;
-        if (steps > 1 && steps % 2 == 0 && settings.swing() > .5001) {
-            return nominal * 2 * (sequence % 2 == 0 ? settings.swing() : 1.0 - settings.swing());
-        }
-        return nominal;
     }
 
     private static void mixVoices(byte[] pcm, List<Voice> voices, double volume) {
@@ -196,41 +178,45 @@ public final class AccurateAudioEngine implements AutoCloseable {
                     mixed += voice.data[voice.position] * voice.gain;
                 voice.position++;
             }
-            mixed = Math.tanh(mixed * volume * 1.15);
-            short value = (short) Math.round(mixed * 32767);
-            pcm[frame * 2] = (byte) (value & 0xff);
-            pcm[frame * 2 + 1] = (byte) ((value >>> 8) & 0xff);
+            short value = (short) Math.round(Math.tanh(mixed * volume * 1.15) * 32767);
+            pcm[frame * 2] = (byte) value;
+            pcm[frame * 2 + 1] = (byte) (value >>> 8);
         }
         voices.removeIf(voice -> voice.position >= voice.data.length);
     }
 
-    private void notifyPulse(MetronomeSettings settings, long sequence, SourceDataLine line) {
-        int steps = settings.subdivision().stepsPerQuarter();
-        int sub = (int) (sequence % steps);
-        int beat = (int) ((sequence / steps) % settings.beatsPerBar());
-        int queuedFrames = Math.max(0, line.getBufferSize() / 2 - line.available() / 2);
-        int delayMs = Math.max(0, (int) Math.round(queuedFrames * 1000.0 / SAMPLE_RATE));
-        var pulse = new BeatPulse(beat, sub, beat == 0 && sub == 0,
-                System.nanoTime() + queuedFrames * 1_000_000_000L / SAMPLE_RATE);
-        var timer = new Timer(delayMs, event -> pulseListeners.forEach(listener -> listener.accept(pulse)));
-        timer.setRepeats(false);
-        timer.start();
-    }
-
-    private void notifyTransport(TransportState value) {
+    private void notifyTransport(long token) {
         SwingUtilities.invokeLater(() -> {
-            transportListeners.forEach(listener -> listener.accept(value));
-            playListeners.forEach(listener -> listener.accept(value == TransportState.PLAYING));
+            if (generation == token) listeners.forEach(listener -> listener.accept(transport));
         });
     }
 
-    @Override public void close() { stop(); }
+    @Override public synchronized void close() {
+        stop();
+        closed = true;
+        worker.shutdown();
+    }
+
+    private static final class Session {
+        final long token;
+        final SourceDataLine line;
+        final ArrayDeque<BeatClock.Event> events = new ArrayDeque<>();
+        BeatClock.Event anchor;
+        Session(long token, SourceDataLine line, BeatClock.Event anchor) {
+            this.token = token; this.line = line; this.anchor = anchor;
+        }
+        synchronized void add(BeatClock.Event event) { events.add(event); }
+        synchronized BeatClock.Position position(long frame) {
+            while (!events.isEmpty() && events.peek().frame() <= frame) anchor = events.remove();
+            return anchor.positionAt(frame);
+        }
+    }
 
     private static final class Voice {
-        private final float[] data;
-        private int position;
-        private final float gain;
-        private Voice(float[] data, int position, float gain) {
+        final float[] data;
+        final float gain;
+        int position;
+        Voice(float[] data, int position, float gain) {
             this.data = data; this.position = position; this.gain = gain;
         }
     }
