@@ -8,7 +8,7 @@ PACKAGE_INPUT="$BUILD_DIR/package-input"
 OUTPUT_DIR="$PROJECT_DIR/dist"
 
 cd "$PROJECT_DIR"
-mvn package
+mvn clean package
 
 mkdir -p "$BUILD_DIR" "$ICONSET_DIR" "$PACKAGE_INPUT"
 java -Djava.awt.headless=true -cp target/classes app.pulseforge.ui.AppIcon "$BUILD_DIR/icon-1024.png"
@@ -33,7 +33,7 @@ fi
 jpackage \
     --type app-image \
     --name PulseForge \
-    --app-version 1.1.0 \
+    --app-version 1.2.0 \
     --vendor PulseForge \
     --mac-package-identifier app.pulseforge.metronome \
     --input "$PACKAGE_INPUT" \
