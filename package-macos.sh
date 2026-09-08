@@ -33,7 +33,7 @@ fi
 jpackage \
     --type app-image \
     --name PulseForge \
-    --app-version 1.2.1 \
+    --app-version 1.2.2 \
     --vendor PulseForge \
     --mac-package-identifier app.pulseforge.metronome \
     --input "$PACKAGE_INPUT" \

@@ -26,7 +26,6 @@ final class TempoWheel extends JComponent {
         setMinimumSize(getPreferredSize());
         setMaximumSize(getPreferredSize());
         setFocusable(true);
-        setToolTipText("Drag the outer wheel or scroll to change tempo; click the center to play or pause");
         var mouse = new MouseAdapter() {
             @Override public void mousePressed(MouseEvent event) {
                 requestFocusInWindow();
