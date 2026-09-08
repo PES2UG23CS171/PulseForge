@@ -11,16 +11,17 @@ import java.awt.geom.Path2D;
 import java.util.function.DoubleConsumer;
 
 final class TempoWheel extends JComponent {
-    private double bpm;
+    private int bpm;
     private DoubleConsumer changeListener = value -> {};
     private Runnable transportAction = () -> {};
     private TransportState transportState = TransportState.STOPPED;
     private int dragY;
     private double dragBpm;
+    private double scrollRemainder;
     private boolean draggingDial;
 
     TempoWheel(double bpm) {
-        this.bpm = bpm;
+        setBpm(bpm);
         setPreferredSize(new Dimension(218, 200));
         setMinimumSize(getPreferredSize());
         setMaximumSize(getPreferredSize());
@@ -32,6 +33,7 @@ final class TempoWheel extends JComponent {
                 draggingDial = !insideTransport(event.getX(), event.getY());
                 dragY = event.getY();
                 dragBpm = TempoWheel.this.bpm;
+                scrollRemainder = 0;
             }
 
             @Override public void mouseReleased(MouseEvent event) {
@@ -49,7 +51,10 @@ final class TempoWheel extends JComponent {
             }
 
             @Override public void mouseWheelMoved(MouseWheelEvent event) {
-                setFromUser(TempoWheel.this.bpm - event.getPreciseWheelRotation());
+                scrollRemainder -= event.getPreciseWheelRotation();
+                int steps = (int) scrollRemainder;
+                scrollRemainder -= steps;
+                if (steps != 0) setFromUser(TempoWheel.this.bpm + steps);
             }
         };
         addMouseListener(mouse);
@@ -70,11 +75,12 @@ final class TempoWheel extends JComponent {
     void setChangeListener(DoubleConsumer listener) { changeListener = listener; }
     void setTransportAction(Runnable action) { transportAction = action; }
     void setTransportState(TransportState value) { transportState = value; repaint(); }
-    void setBpm(double value) { bpm = Math.max(20, Math.min(300, value)); repaint(); }
+    void setBpm(double value) { bpm = (int) Math.round(Math.clamp(value, 20, 300)); repaint(); }
 
     private void setFromUser(double value) {
-        setBpm(Math.round(Math.max(20, Math.min(300, value)) * 10) / 10.0);
-        changeListener.accept(bpm);
+        int previous = bpm;
+        setBpm(value);
+        if (bpm != previous) changeListener.accept(bpm);
     }
 
     private boolean insideTransport(int mouseX, int mouseY) {

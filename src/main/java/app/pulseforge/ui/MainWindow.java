@@ -17,7 +17,6 @@ public final class MainWindow extends JFrame {
     private final TempoWheel wheel;
     private final JButton tempo = Theme.button("");
     private final JButton signature = Theme.button("");
-    private final JLabel beatUnit = Theme.label("");
     private final MovingBeatBar beatBar;
     private final TimeSignatureDialog signatureDialog;
     private final SettingsDialog soundDialog;
@@ -64,9 +63,6 @@ public final class MainWindow extends JFrame {
         readout.add(signature);
         readout.setPreferredSize(new Dimension(328, 78));
         top.add(readout, BorderLayout.CENTER);
-        beatUnit.setHorizontalAlignment(SwingConstants.CENTER);
-        beatUnit.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        top.add(beatUnit, BorderLayout.SOUTH);
         root.add(top, BorderLayout.NORTH);
 
         var middle = Theme.panel(new BorderLayout(0, 8));
@@ -124,22 +120,21 @@ public final class MainWindow extends JFrame {
 
     private void sync(MetronomeSettings settings) {
         wheel.setBpm(settings.bpm());
-        String bpm = settings.bpm() == Math.rint(settings.bpm())
-                ? Integer.toString((int) settings.bpm()) : String.format("%.1f", settings.bpm());
+        String bpm = Integer.toString((int) settings.bpm());
         tempo.setText("<html><center><span style='font-size:10px'>Tempo</span><br><span style='font-size:29px'>" + bpm + "</span></center></html>");
         signature.setText("<html><center><span style='font-size:10px'>Time Signature</span><br><span style='font-size:29px'>"
                 + settings.beatsPerBar() + "/" + settings.beatUnit() + "</span></center></html>");
-        beatUnit.setText(MetronomeSettings.noteName(settings.beatUnit()) + " = " + bpm + " BPM");
         beatBar.repaint();
     }
 
     private void editTempo() {
-        var input = new JSpinner(new SpinnerNumberModel(state.get().bpm(), 20, 300, .1));
+        var input = new JSpinner(new SpinnerNumberModel((int) state.get().bpm(), 20, 300, 1));
+        input.setEditor(new JSpinner.NumberEditor(input, "0"));
         if (JOptionPane.showConfirmDialog(this, input, "Tempo (BPM)", JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
             try {
                 input.commitEdit();
-                state.setBpm(((Number) input.getValue()).doubleValue());
+                state.setBpm(((Number) input.getValue()).intValue());
             } catch (java.text.ParseException ignored) { }
         }
     }
@@ -149,8 +144,8 @@ public final class MainWindow extends JFrame {
         if (!taps.isEmpty() && now - taps.getLast() > 3_100_000_000L) taps.clear();
         taps.addLast(now);
         while (taps.size() > 7) taps.removeFirst();
-        if (taps.size() > 1) state.setBpm(Math.round(600_000_000_000.0 * (taps.size() - 1)
-                / (taps.getLast() - taps.getFirst())) / 10.0);
+        if (taps.size() > 1) state.setBpm(Math.round(60_000_000_000.0 * (taps.size() - 1)
+                / (taps.getLast() - taps.getFirst())));
     }
 
     private void bind(String key, String name, Runnable action) {

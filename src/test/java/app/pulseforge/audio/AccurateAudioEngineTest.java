@@ -34,7 +34,7 @@ class AccurateAudioEngineTest {
     }
 
     @Test void fractionalSampleRoundingDoesNotAccumulateOverAnHour() {
-        var s = mixed(137.3);
+        var s = mixed(137);
         var clock = new BeatClock(RATE, s, BeatClock.Position.beginning());
         long hour = RATE * 3600L;
         long beatNumber = 0;

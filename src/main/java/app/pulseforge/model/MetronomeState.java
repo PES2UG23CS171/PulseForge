@@ -120,7 +120,7 @@ public final class MetronomeState {
     }
 
     private void save(MetronomeSettings s) {
-        prefs.putDouble("bpm", s.bpm());
+        prefs.putInt("bpm", (int) s.bpm());
         prefs.putInt("beats", s.beatsPerBar());
         prefs.putInt("unit", s.beatUnit());
         prefs.putDouble("volume", s.volume());

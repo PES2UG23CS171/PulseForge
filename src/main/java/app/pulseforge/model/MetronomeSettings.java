@@ -11,7 +11,7 @@ public record MetronomeSettings(
     public static final List<Integer> NOTE_VALUES = List.of(1, 2, 4, 8, 16, 32);
 
     public MetronomeSettings {
-        bpm = Double.isFinite(bpm) ? Math.clamp(bpm, 20, 300) : 120;
+        bpm = Double.isFinite(bpm) ? Math.round(Math.clamp(bpm, 20, 300)) : 120;
         beatsPerBar = Math.clamp(beatsPerBar, 1, 12);
         beatUnit = NOTE_VALUES.contains(beatUnit) ? beatUnit : 4;
         volume = Double.isFinite(volume) ? Math.clamp(volume, 0, 1) : .72;

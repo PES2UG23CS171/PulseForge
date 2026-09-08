@@ -48,11 +48,16 @@ class MetronomeSettingsTest {
 
     @Test void oldGlobalRhythmPreferencesMigrateToEachBeat() {
         var prefs = new MemoryPreferences();
+        prefs.putDouble("bpm", 120.7);
         prefs.put("subdivision", "EIGHTH");
         prefs.putInt("unit", 8);
         var state = new MetronomeState(prefs);
+        assertEquals(121, state.get().bpm());
         assertTrue(state.get().patterns().stream().allMatch(p -> p.division() == Subdivision.EIGHTH));
         state.setPattern(0, Subdivision.TRIPLET);
+        state.setBpm(119.2);
+        assertEquals(119, new MetronomeState(prefs).get().bpm());
+        assertEquals(119, prefs.getInt("bpm", 0));
         assertEquals(Subdivision.TRIPLET, new MetronomeState(prefs).get().patterns().getFirst().division());
     }
 }

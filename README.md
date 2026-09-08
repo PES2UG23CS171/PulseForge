@@ -6,13 +6,13 @@ A compact macOS metronome built with Java 21 and Spring. The app includes its ow
 
 ## Use it
 
-- **Tempo:** scroll or drag the outer wheel, use − / +, tap the tempo, or click the BPM to type a value.
+- **Tempo:** scroll or drag the outer wheel, use − / +, tap the tempo, or click the BPM to type a value. Tempo uses whole numbers from 20–300 BPM, in 1 BPM steps.
 - **Play / Pause:** click the center of the wheel. Pause holds the current beat position.
 - **Time Signature:** click the displayed fraction to set 1–12 beats per bar and a note value of 1, 2, 4, 8, 16 or 32.
 - **Each beat:** inside Time Signature, select a numbered beat, choose its note pattern, then toggle individual sounds into rests. Accents and whole-beat muting are also available.
 - **Sound:** the top-right control opens output-device selection, volume, click sounds and GarageBand WAV/AIFF import.
 
-The BPM counts the time-signature note. At 120 BPM in 4/16, each sixteenth-note beat lasts half a second. The note value is shown beneath the tempo and time signature.
+The BPM counts the time-signature note. At 120 BPM in 4/16, each sixteenth-note beat lasts half a second.
 
 For the example **triplet / crotchet / semiquavers / crotchet** in 4/4:
 
