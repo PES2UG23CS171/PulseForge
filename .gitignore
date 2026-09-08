@@ -1,5 +1,7 @@
 target/
 .DS_Store
 dist/
+build/
+PulseForge.app/
 *.iml
 .idea/

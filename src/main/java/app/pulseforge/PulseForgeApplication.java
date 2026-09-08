@@ -3,6 +3,7 @@ package app.pulseforge;
 import app.pulseforge.audio.AccurateAudioEngine;
 import app.pulseforge.model.MetronomeState;
 import app.pulseforge.ui.MainWindow;
+import app.pulseforge.ui.AppIcon;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,10 +18,14 @@ public final class PulseForgeApplication {
         System.setProperty("apple.awt.application.name", "PulseForge");
         System.setProperty("apple.laf.useScreenMenuBar", "true");
         System.setProperty("apple.awt.application.appearance", "NSAppearanceNameDarkAqua");
+        if (Taskbar.isTaskbarSupported()) {
+            try { Taskbar.getTaskbar().setIconImage(AppIcon.create(512)); } catch (Exception ignored) {}
+        }
         SwingUtilities.invokeLater(() -> {
             configureLookAndFeel();
             var context = new AnnotationConfigApplicationContext(AppConfig.class);
             var window = context.getBean(MainWindow.class);
+            window.setIconImage(AppIcon.create(256));
             window.setVisible(true);
             window.toFront();
         });
