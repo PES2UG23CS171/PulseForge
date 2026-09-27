@@ -1,7 +1,9 @@
 package app.pulseforge;
 
 import app.pulseforge.audio.AccurateAudioEngine;
+import app.pulseforge.audio.TunerEngine;
 import app.pulseforge.model.MetronomeState;
+import app.pulseforge.model.TunerState;
 import app.pulseforge.ui.MainWindow;
 import app.pulseforge.ui.AppIcon;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -45,8 +47,11 @@ public final class PulseForgeApplication {
     static class AppConfig {
         @Bean MetronomeState metronomeState() { return new MetronomeState(); }
         @Bean AccurateAudioEngine audioEngine(MetronomeState state) { return new AccurateAudioEngine(state); }
-        @Bean MainWindow mainWindow(MetronomeState state, AccurateAudioEngine engine) {
-            return new MainWindow(state, engine);
+        @Bean TunerState tunerState() { return new TunerState(); }
+        @Bean TunerEngine tunerEngine(TunerState state) { return new TunerEngine(state); }
+        @Bean MainWindow mainWindow(MetronomeState state, AccurateAudioEngine engine,
+                                    TunerState tunerState, TunerEngine tunerEngine) {
+            return new MainWindow(state, engine, tunerState, tunerEngine);
         }
     }
 }

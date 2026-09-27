@@ -2,7 +2,6 @@ package app.pulseforge.audio;
 
 import app.pulseforge.model.Accent;
 import app.pulseforge.model.MetronomeState;
-import app.pulseforge.model.SoundType;
 import javax.sound.sampled.*;
 import javax.swing.SwingUtilities;
 import java.util.ArrayList;
@@ -14,6 +13,9 @@ import java.util.function.Consumer;
 public final class AccurateAudioEngine implements AutoCloseable {
     public static final int SAMPLE_RATE = 48_000;
     private static final int CHUNK_FRAMES = 256;
+    /** Soft saturation: a full-scale hit at full volume reaches 0 dBFS; overlapping hits compress instead of clipping. */
+    private static final double DRIVE = 1.5;
+    private static final double SATURATION = Math.tanh(DRIVE);
     private static final AudioFormat FORMAT = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
     private final MetronomeState state;
     private final ClickSamples samples = new ClickSamples();
@@ -37,8 +39,6 @@ public final class AccurateAudioEngine implements AutoCloseable {
     public boolean isPaused() { return transport == TransportState.PAUSED; }
     public TransportState transportState() { return transport; }
     public String errorMessage() { return errorMessage; }
-    public boolean customSampleLoaded() { return samples.customSampleLoaded(); }
-    public void prepareCustomSample(String path) { samples.load(path); }
     public void addTransportListener(Consumer<TransportState> listener) { listeners.add(listener); }
 
     public synchronized void play() {
@@ -68,6 +68,13 @@ public final class AccurateAudioEngine implements AutoCloseable {
     }
 
     public void togglePlayPause() { if (isPlaying()) pause(); else play(); }
+
+    /** Plays the current sound's accent, beat and two subdivisions once; ignored while the metronome plays. */
+    public synchronized void preview() {
+        if (closed || isPlaying()) return;
+        long token = generation;
+        worker.submit(() -> playPreview(token));
+    }
 
     public synchronized void restartForOutputChange() {
         if (isPlaying()) { pause(); play(); }
@@ -100,9 +107,6 @@ public final class AccurateAudioEngine implements AutoCloseable {
         try {
             if (!current(token)) return;
             var settings = state.get();
-            // Decode user audio before playback, not inside the render loop.
-            if (settings.sound() == SoundType.CUSTOM && !settings.customSamplePath().isBlank())
-                samples.load(settings.customSamplePath());
             line = openLine(settings.mixerName());
             var clock = new BeatClock(SAMPLE_RATE, settings, start);
             var active = new Session(token, line, clock.anchor());
@@ -114,14 +118,13 @@ public final class AccurateAudioEngine implements AutoCloseable {
             while (current(token)) {
                 settings = state.get();
                 long frameStart = clock.cursor();
-                var bank = samples.get(settings.sound(), settings.customSamplePath());
+                var bank = samples.get(settings.sound());
                 for (var event : clock.advance(CHUNK_FRAMES, settings)) {
                     active.add(event);
                     if (event.audible()) {
                         float[] data = event.step() > 0 ? bank.subdivision()
                                 : event.accent() == Accent.STRONG ? bank.accent() : bank.normal();
-                        float gain = event.step() > 0 ? .48f : event.accent() == Accent.STRONG ? 1f : .76f;
-                        voices.add(new Voice(data, -(int) (event.frame() - frameStart), gain));
+                        voices.add(new Voice(data, -(int) (event.frame() - frameStart)));
                     }
                 }
                 // Drain consumed events even when the window is hidden.
@@ -170,19 +173,55 @@ public final class AccurateAudioEngine implements AutoCloseable {
         return line;
     }
 
+    private void playPreview(long token) {
+        SourceDataLine line = null;
+        try {
+            var settings = state.get();
+            var bank = samples.get(settings.sound());
+            line = openLine(settings.mixerName());
+            long[] starts = {0, Math.round(SAMPLE_RATE * .35), Math.round(SAMPLE_RATE * .70), Math.round(SAMPLE_RATE * .875)};
+            float[][] hits = {bank.accent(), bank.normal(), bank.subdivision(), bank.subdivision()};
+            var voices = new ArrayList<Voice>();
+            byte[] pcm = new byte[CHUNK_FRAMES * 2];
+            boolean started = false;
+            for (long frame = 0; frame < SAMPLE_RATE * 1.4 && generation == token; frame += CHUNK_FRAMES) {
+                for (int i = 0; i < starts.length; i++)
+                    if (starts[i] >= frame && starts[i] < frame + CHUNK_FRAMES)
+                        voices.add(new Voice(hits[i], -(int) (starts[i] - frame)));
+                mixVoices(pcm, voices, state.get().volume());
+                line.write(pcm, 0, pcm.length);
+                if (!started) { line.start(); started = true; }
+            }
+            if (generation == token) line.drain();
+        } catch (Exception ignored) {
+            // Best effort: output problems are reported when the metronome itself starts.
+        } finally {
+            if (line != null) {
+                line.stop();
+                line.flush();
+                line.close();
+            }
+        }
+    }
+
     private static void mixVoices(byte[] pcm, List<Voice> voices, double volume) {
         for (int frame = 0; frame < CHUNK_FRAMES; frame++) {
             double mixed = 0;
             for (var voice : voices) {
-                if (voice.position >= 0 && voice.position < voice.data.length)
-                    mixed += voice.data[voice.position] * voice.gain;
+                if (voice.position >= 0 && voice.position < voice.data.length) mixed += voice.data[voice.position];
                 voice.position++;
             }
-            short value = (short) Math.round(Math.tanh(mixed * volume * 1.15) * 32767);
+            short value = (short) Math.round(shape(mixed, volume) * 32767);
             pcm[frame * 2] = (byte) value;
             pcm[frame * 2 + 1] = (byte) (value >>> 8);
         }
         voices.removeIf(voice -> voice.position >= voice.data.length);
+    }
+
+    /** Volume follows a power law for a usable range; the saturator lets full volume reach full scale. */
+    static double shape(double mixed, double volume) {
+        double driven = mixed * Math.pow(Math.clamp(volume, 0, 1), 1.5) * DRIVE;
+        return Math.clamp(Math.tanh(driven) / SATURATION, -1, 1);
     }
 
     private void notifyTransport(long token) {
@@ -214,10 +253,10 @@ public final class AccurateAudioEngine implements AutoCloseable {
 
     private static final class Voice {
         final float[] data;
-        final float gain;
         int position;
-        Voice(float[] data, int position, float gain) {
-            this.data = data; this.position = position; this.gain = gain;
+        Voice(float[] data, int position) {
+            this.data = data;
+            this.position = position;
         }
     }
 }

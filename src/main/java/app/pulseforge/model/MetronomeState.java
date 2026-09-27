@@ -31,13 +31,13 @@ public final class MetronomeState {
     public void setBpm(double bpm) {
         var s = get();
         publish(new MetronomeSettings(bpm, s.beatsPerBar(), s.beatUnit(), s.volume(), s.sound(),
-                s.swing(), s.mixerName(), s.customSamplePath(), s.accents(), s.patterns()));
+                s.swing(), s.mixerName(), s.accents(), s.patterns()));
     }
 
     public void setMeter(int beats, int unit) {
         var s = get();
         publish(new MetronomeSettings(s.bpm(), beats, unit, s.volume(), s.sound(),
-                s.swing(), s.mixerName(), s.customSamplePath(), s.accents(), s.patterns()));
+                s.swing(), s.mixerName(), s.accents(), s.patterns()));
     }
 
     public void setPattern(int beat, Subdivision division) {
@@ -46,7 +46,7 @@ public final class MetronomeState {
         var patterns = new ArrayList<>(s.patterns());
         patterns.set(beat, BeatPattern.all(division));
         publish(new MetronomeSettings(s.bpm(), s.beatsPerBar(), s.beatUnit(), s.volume(), s.sound(),
-                s.swing(), s.mixerName(), s.customSamplePath(), s.accents(), patterns));
+                s.swing(), s.mixerName(), s.accents(), patterns));
     }
 
     public void toggleHit(int beat, int hit) {
@@ -55,7 +55,7 @@ public final class MetronomeState {
         var patterns = new ArrayList<>(s.patterns());
         patterns.set(beat, patterns.get(beat).toggle(hit));
         publish(new MetronomeSettings(s.bpm(), s.beatsPerBar(), s.beatUnit(), s.volume(), s.sound(),
-                s.swing(), s.mixerName(), s.customSamplePath(), s.accents(), patterns));
+                s.swing(), s.mixerName(), s.accents(), patterns));
     }
 
     public void setAccent(int beat, Accent accent) {
@@ -64,37 +64,31 @@ public final class MetronomeState {
         var accents = new ArrayList<>(s.accents());
         accents.set(beat, accent);
         publish(new MetronomeSettings(s.bpm(), s.beatsPerBar(), s.beatUnit(), s.volume(), s.sound(),
-                s.swing(), s.mixerName(), s.customSamplePath(), accents, s.patterns()));
+                s.swing(), s.mixerName(), accents, s.patterns()));
     }
 
     public void setVolume(double volume) {
         var s = get();
         publish(new MetronomeSettings(s.bpm(), s.beatsPerBar(), s.beatUnit(), volume, s.sound(),
-                s.swing(), s.mixerName(), s.customSamplePath(), s.accents(), s.patterns()));
+                s.swing(), s.mixerName(), s.accents(), s.patterns()));
     }
 
     public void setSound(SoundType sound) {
         var s = get();
         publish(new MetronomeSettings(s.bpm(), s.beatsPerBar(), s.beatUnit(), s.volume(), sound,
-                s.swing(), s.mixerName(), s.customSamplePath(), s.accents(), s.patterns()));
+                s.swing(), s.mixerName(), s.accents(), s.patterns()));
     }
 
     public void setSwing(double swing) {
         var s = get();
         publish(new MetronomeSettings(s.bpm(), s.beatsPerBar(), s.beatUnit(), s.volume(), s.sound(),
-                swing, s.mixerName(), s.customSamplePath(), s.accents(), s.patterns()));
+                swing, s.mixerName(), s.accents(), s.patterns()));
     }
 
     public void setMixerName(String name) {
         var s = get();
         publish(new MetronomeSettings(s.bpm(), s.beatsPerBar(), s.beatUnit(), s.volume(), s.sound(),
-                s.swing(), name, s.customSamplePath(), s.accents(), s.patterns()));
-    }
-
-    public void setCustomSamplePath(String path) {
-        var s = get();
-        publish(new MetronomeSettings(s.bpm(), s.beatsPerBar(), s.beatUnit(), s.volume(), SoundType.CUSTOM,
-                s.swing(), s.mixerName(), path, s.accents(), s.patterns()));
+                s.swing(), name, s.accents(), s.patterns()));
     }
 
     private MetronomeSettings load() {
@@ -115,8 +109,7 @@ public final class MetronomeState {
         return new MetronomeSettings(prefs.getDouble("bpm", 120), beats, prefs.getInt("unit", 4),
                 prefs.getDouble("volume", .72),
                 enumValue(SoundType.class, prefs.get("sound", "STUDIO"), SoundType.STUDIO),
-                prefs.getDouble("swing", .5), prefs.get("mixer", "System Default"),
-                prefs.get("customSample", ""), accents, patterns);
+                prefs.getDouble("swing", .5), prefs.get("mixer", "System Default"), accents, patterns);
     }
 
     private void save(MetronomeSettings s) {
@@ -127,7 +120,6 @@ public final class MetronomeState {
         prefs.put("sound", s.sound().name());
         prefs.putDouble("swing", s.swing());
         prefs.put("mixer", s.mixerName());
-        prefs.put("customSample", s.customSamplePath());
         var codes = new StringBuilder();
         s.accents().forEach(a -> codes.append(a == Accent.STRONG ? 'S' : a == Accent.MUTED ? 'M' : 'N'));
         prefs.put("accents", codes.toString());
@@ -144,6 +136,7 @@ public final class MetronomeState {
             prefs.remove("beat." + i + ".hits");
         }
         prefs.remove("subdivision");
+        prefs.remove("customSample");
     }
 
     private static <T extends Enum<T>> T enumValue(Class<T> type, String value, T fallback) {

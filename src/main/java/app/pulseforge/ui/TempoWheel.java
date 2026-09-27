@@ -10,7 +10,10 @@ import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.util.function.DoubleConsumer;
 
+/** Tempo knob: the tick ring turns half a tick per BPM, easing towards the current tempo. */
 final class TempoWheel extends JComponent {
+    private static final int TICKS = 56;
+    private static final double RADIANS_PER_BPM = 2 * Math.PI / TICKS / 2;
     private int bpm;
     private DoubleConsumer changeListener = value -> {};
     private Runnable transportAction = () -> {};
@@ -19,9 +22,14 @@ final class TempoWheel extends JComponent {
     private double dragBpm;
     private double scrollRemainder;
     private boolean draggingDial;
+    private double targetAngle;
+    private double dialAngle;
+    private final Timer spin = new Timer(16, e -> animate());
 
     TempoWheel(double bpm) {
         setBpm(bpm);
+        dialAngle = targetAngle;
+        spin.stop();
         setPreferredSize(new Dimension(218, 200));
         setMinimumSize(getPreferredSize());
         setMaximumSize(getPreferredSize());
@@ -74,7 +82,23 @@ final class TempoWheel extends JComponent {
     void setChangeListener(DoubleConsumer listener) { changeListener = listener; }
     void setTransportAction(Runnable action) { transportAction = action; }
     void setTransportState(TransportState value) { transportState = value; repaint(); }
-    void setBpm(double value) { bpm = (int) Math.round(Math.clamp(value, 20, 300)); repaint(); }
+    void setBpm(double value) {
+        bpm = (int) Math.round(Math.clamp(value, 20, 300));
+        targetAngle = bpm * RADIANS_PER_BPM;
+        if (!spin.isRunning()) spin.start();
+        repaint();
+    }
+
+    private void animate() {
+        double remaining = targetAngle - dialAngle;
+        if (Math.abs(remaining) < 5e-4) {
+            dialAngle = targetAngle;
+            spin.stop();
+        } else {
+            dialAngle += remaining * .3;
+        }
+        repaint();
+    }
 
     private void setFromUser(double value) {
         int previous = bpm;
@@ -98,29 +122,27 @@ final class TempoWheel extends JComponent {
         double cy = y + size / 2.0;
         double radius = size / 2.0 - 8;
 
+        var face = new Ellipse2D.Double(x + 5, y + 5, size - 10, size - 10);
         g.setColor(Theme.PANEL);
-        g.fill(new Ellipse2D.Double(x + 5, y + 5, size - 10, size - 10));
+        g.fill(face);
+        // Fixed lighting on the face, so the turning ticks read as a knob rotating under a lamp.
+        g.setPaint(new RadialGradientPaint((float) (cx - size * .22), (float) (cy - size * .28), (float) (size * .75),
+                new float[] {0f, 1f}, new Color[] {new Color(255, 255, 255, 22), new Color(255, 255, 255, 0)}));
+        g.fill(face);
         g.setStroke(new BasicStroke(4));
         g.setColor(Theme.ACCENT_2);
         g.draw(new Ellipse2D.Double(x + 8, y + 8, size - 16, size - 16));
 
-        for (int i = 0; i < 56; i++) {
-            double angle = 2 * Math.PI * i / 56.0;
-            double inner = radius - (i % 4 == 0 ? 13 : 9);
-            g.setStroke(new BasicStroke(i % 4 == 0 ? 2f : 1f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g.setColor(i % 4 == 0 ? Theme.MUTED : Theme.BORDER);
+        for (int i = 0; i < TICKS; i++) {
+            double angle = dialAngle + 2 * Math.PI * i / TICKS;
+            boolean major = i % 4 == 0;
+            double inner = radius - (major ? 13 : 9);
+            g.setStroke(new BasicStroke(major ? 2f : 1f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setColor(major ? Theme.MUTED : Theme.BORDER);
             g.draw(new Line2D.Double(cx + Math.sin(angle) * inner, cy - Math.cos(angle) * inner,
                     cx + Math.sin(angle) * radius, cy - Math.cos(angle) * radius));
         }
 
-        double progress = (bpm - 20) / 280.0;
-        double pointerAngle = Math.toRadians(-135 + progress * 270);
-        g.setStroke(new BasicStroke(5, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.setColor(Theme.ACCENT);
-        g.draw(new Line2D.Double(cx + Math.sin(pointerAngle) * (radius - 28),
-                cy - Math.cos(pointerAngle) * (radius - 28),
-                cx + Math.sin(pointerAngle) * (radius - 13),
-                cy - Math.cos(pointerAngle) * (radius - 13)));
 
         double buttonSize = 96;
         g.setColor(transportState == TransportState.PLAYING ? Theme.WARNING : Theme.PANEL_LIGHT);

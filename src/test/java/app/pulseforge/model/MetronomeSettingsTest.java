@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class MetronomeSettingsTest {
     @Test void valuesAndPatternLengthsAreNormalized() {
         var s = new MetronomeSettings(900, 50, 3, -2, SoundType.STUDIO, .99,
-                null, null, List.of(Accent.MUTED), List.of(BeatPattern.all(Subdivision.TRIPLET)));
+                null, List.of(Accent.MUTED), List.of(BeatPattern.all(Subdivision.TRIPLET)));
         assertEquals(300, s.bpm());
         assertEquals(12, s.beatsPerBar());
         assertEquals(4, s.beatUnit());

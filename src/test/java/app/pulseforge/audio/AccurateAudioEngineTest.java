@@ -24,7 +24,7 @@ class AccurateAudioEngineTest {
     @Test void restsAndMutedBeatsKeepTheirTimeWithoutProducingClicks() {
         var patterns = new ArrayList<>(mixed(120).patterns());
         patterns.set(0, patterns.get(0).toggle(1));
-        var s = new MetronomeSettings(120, 4, 4, .7, SoundType.STUDIO, .5, "", "",
+        var s = new MetronomeSettings(120, 4, 4, .7, SoundType.STUDIO, .5, "",
                 List.of(Accent.STRONG, Accent.MUTED, Accent.NORMAL, Accent.NORMAL), patterns);
         var events = new BeatClock(RATE, s, BeatClock.Position.beginning()).advance(96000, s);
         assertFalse(events.get(1).audible());
@@ -64,26 +64,26 @@ class AccurateAudioEngineTest {
 
     @Test void allTimeSignatureNoteValuesUseTheExplicitBeatTempo() {
         for (int unit : MetronomeSettings.NOTE_VALUES) {
-            var s = new MetronomeSettings(120, 4, unit, .7, SoundType.STUDIO, .5, "", "", null, null);
+            var s = new MetronomeSettings(120, 4, unit, .7, SoundType.STUDIO, .5, "", null, null);
             var events = new BeatClock(RATE, s, BeatClock.Position.beginning()).advance(96000, s);
             assertEquals(List.of(0L, 24000L, 48000L, 72000L), events.stream().map(BeatClock.Event::frame).toList());
         }
     }
 
     @Test void swingKeepsBeatBoundariesAndTempoChangesTakeEffectAtNextBeat() {
-        var s = new MetronomeSettings(120, 1, 4, .7, SoundType.STUDIO, .60, "", "",
+        var s = new MetronomeSettings(120, 1, 4, .7, SoundType.STUDIO, .60, "",
                 null, List.of(BeatPattern.all(Subdivision.SIXTEENTH)));
         var clock = new BeatClock(RATE, s, BeatClock.Position.beginning());
         assertEquals(List.of(0L, 7200L, 12000L, 19200L),
                 clock.advance(24000, s).stream().map(BeatClock.Event::frame).toList());
-        var faster = new MetronomeSettings(240, 1, 4, .7, SoundType.STUDIO, .5, "", "",
+        var faster = new MetronomeSettings(240, 1, 4, .7, SoundType.STUDIO, .5, "",
                 null, List.of(BeatPattern.straight()));
         var events = clock.advance(24000, faster);
         assertEquals(List.of(24000L, 36000L), events.stream().map(BeatClock.Event::frame).toList());
     }
 
     private static MetronomeSettings mixed(double bpm) {
-        return new MetronomeSettings(bpm, 4, 4, .7, SoundType.STUDIO, .5, "System Default", "", null,
+        return new MetronomeSettings(bpm, 4, 4, .7, SoundType.STUDIO, .5, "System Default", null,
                 List.of(BeatPattern.all(Subdivision.TRIPLET), BeatPattern.straight(),
                         BeatPattern.all(Subdivision.SIXTEENTH), BeatPattern.straight()));
     }

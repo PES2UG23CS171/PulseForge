@@ -1,29 +1,34 @@
 package app.pulseforge.ui;
 
 import app.pulseforge.audio.AccurateAudioEngine;
+import app.pulseforge.audio.TunerEngine;
 import app.pulseforge.model.*;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
-import java.io.File;
-import java.util.concurrent.CompletableFuture;
 
+/** Output, volume, metronome sound and the tuner's microphone input. */
 final class SettingsDialog extends JDialog {
     private final MetronomeState state;
     private final AccurateAudioEngine engine;
+    private final TunerState tunerState;
+    private final TunerEngine tunerEngine;
     private final JComboBox<String> output = new JComboBox<>();
+    private final JComboBox<String> input = new JComboBox<>();
+    private final JComboBox<String> inputChannel = new JComboBox<>();
     private final JSlider volume = new JSlider(0, 100);
     private final JLabel volumeValue = Theme.label("");
     private final JComboBox<SoundType> sound = new JComboBox<>(SoundType.values());
-    private final JLabel sampleStatus = Theme.label("");
-    private final JButton importButton = Theme.button("Import GarageBand audio…");
+    private final JButton previewButton = Theme.button("▶");
     private boolean syncing;
 
-    SettingsDialog(JFrame owner, MetronomeState state, AccurateAudioEngine engine) {
-        super(owner, "Sound", false);
+    SettingsDialog(JFrame owner, MetronomeState state, AccurateAudioEngine engine,
+                   TunerState tunerState, TunerEngine tunerEngine) {
+        super(owner, "Settings", false);
         this.state = state;
         this.engine = engine;
+        this.tunerState = tunerState;
+        this.tunerEngine = tunerEngine;
         setDefaultCloseOperation(HIDE_ON_CLOSE);
         setResizable(false);
         var root = new JPanel(new GridBagLayout());
@@ -31,21 +36,37 @@ final class SettingsDialog extends JDialog {
         root.setBorder(new EmptyBorder(16, 18, 16, 18));
         setContentPane(root);
         Theme.styleInput(output);
+        Theme.styleInput(input);
+        Theme.styleInput(inputChannel);
         Theme.styleInput(sound);
+        output.setName("outputDevice");
+        input.setName("inputDevice");
+        inputChannel.setName("inputChannel");
+        input.setToolTipText("Microphone or audio interface the tuner listens to");
+        inputChannel.setToolTipText("Auto follows whichever input of the interface carries signal");
         volume.setOpaque(false);
         var volumeRow = Theme.panel(new BorderLayout(8, 0));
         volumeRow.add(volume, BorderLayout.CENTER);
         volumeRow.add(volumeValue, BorderLayout.EAST);
+        var soundRow = Theme.panel(new BorderLayout(8, 0));
+        soundRow.add(sound, BorderLayout.CENTER);
+        previewButton.setName("previewSound");
+        previewButton.setToolTipText("Play the selected sound");
+        previewButton.setBorder(new EmptyBorder(4, 12, 4, 12));
+        previewButton.addActionListener(e -> engine.preview());
+        soundRow.add(previewButton, BorderLayout.EAST);
         row(root, 0, "Output device", output);
         row(root, 1, "Volume", volumeRow);
-        row(root, 2, "Click sound", sound);
-        row(root, 3, "", importButton);
-        sampleStatus.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        row(root, 4, "", sampleStatus);
+        row(root, 2, "Sound", soundRow);
+        row(root, 3, "Input device", input);
+        row(root, 4, "Input channel", inputChannel);
+        var inputHint = Theme.label("Auto follows the input that carries signal.");
+        inputHint.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        row(root, 5, "", inputHint);
         var done = Theme.button("Done");
         done.addActionListener(e -> setVisible(false));
-        row(root, 5, "", done);
-        root.setPreferredSize(new Dimension(432, 270));
+        row(root, 6, "", done);
+        root.setPreferredSize(new Dimension(432, 300));
         pack();
 
         output.addActionListener(e -> {
@@ -58,14 +79,26 @@ final class SettingsDialog extends JDialog {
         sound.addActionListener(e -> {
             if (syncing) return;
             var selected = (SoundType) sound.getSelectedItem();
-            if (selected == SoundType.CUSTOM && state.get().customSamplePath().isBlank()) importSample();
-            else if (selected != null) {
-                if (selected == SoundType.CUSTOM) loadSample(new File(state.get().customSamplePath()));
-                else state.setSound(selected);
+            if (selected != null) {
+                state.setSound(selected);
+                engine.preview();
             }
         });
-        importButton.addActionListener(e -> importSample());
+        input.addActionListener(e -> {
+            if (!syncing && input.getSelectedItem() != null) {
+                tunerState.setInputName(input.getSelectedItem().toString());
+                refreshChannels();
+                tunerEngine.restartForInputChange();
+            }
+        });
+        inputChannel.addActionListener(e -> {
+            if (!syncing && inputChannel.getSelectedIndex() >= 0) {
+                tunerState.setInputChannel(inputChannel.getSelectedIndex());
+                tunerEngine.restartForInputChange();
+            }
+        });
         state.addListener(settings -> SwingUtilities.invokeLater(() -> sync(settings)));
+        tunerState.addListener(settings -> SwingUtilities.invokeLater(() -> syncInput(settings)));
         getRootPane().registerKeyboardAction(e -> setVisible(false), KeyStroke.getKeyStroke("ESCAPE"),
                 JComponent.WHEN_IN_FOCUSED_WINDOW);
     }
@@ -73,7 +106,10 @@ final class SettingsDialog extends JDialog {
     void open() {
         syncing = true;
         output.setModel(new DefaultComboBoxModel<>(AccurateAudioEngine.outputMixerNames().toArray(String[]::new)));
+        input.setModel(new DefaultComboBoxModel<>(TunerEngine.inputMixerNames().toArray(String[]::new)));
+        refreshChannels();
         sync(state.get());
+        syncInput(tunerState.get());
         setLocationRelativeTo(getOwner());
         setVisible(true);
         toFront();
@@ -85,42 +121,28 @@ final class SettingsDialog extends JDialog {
         volume.setValue((int) Math.round(settings.volume() * 100));
         volumeValue.setText(volume.getValue() + "%");
         sound.setSelectedItem(settings.sound());
-        String file = settings.customSamplePath().isBlank() ? "WAV / AIFF recordings"
-                : new File(settings.customSamplePath()).getName();
-        sampleStatus.setText(file.length() > 38 ? file.substring(0, 35) + "…" : file);
-        sampleStatus.setToolTipText(file);
         syncing = false;
     }
 
-    private void importSample() {
-        var music = new File(System.getProperty("user.home"), "Music");
-        var start = new File(music, "Garageband projects ");
-        if (!state.get().customSamplePath().isBlank()) start = new File(state.get().customSamplePath()).getParentFile();
-        if (start == null || !start.isDirectory()) start = music;
-        var chooser = new JFileChooser(start);
-        chooser.setDialogTitle("Choose a drum recording");
-        chooser.setFileFilter(new FileNameExtensionFilter("WAV and AIFF audio", "wav", "aiff", "aif"));
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) loadSample(chooser.getSelectedFile());
-        else sync(state.get());
+    private void syncInput(TunerSettings settings) {
+        syncing = true;
+        input.setSelectedItem(settings.inputName());
+        inputChannel.setSelectedIndex(Math.min(settings.inputChannel(), inputChannel.getItemCount() - 1));
+        syncing = false;
     }
 
-    private void loadSample(File file) {
-        sampleStatus.setText("Loading recording…");
-        importButton.setEnabled(false);
-        sound.setEnabled(false);
-        CompletableFuture.runAsync(() -> engine.prepareCustomSample(file.getAbsolutePath()))
-                .whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
-                    importButton.setEnabled(true);
-                    sound.setEnabled(true);
-                    if (error == null && engine.customSampleLoaded()) {
-                        state.setCustomSamplePath(file.getAbsolutePath());
-                    } else {
-                        sync(state.get());
-                        sampleStatus.setText("Unable to load this recording");
-                        JOptionPane.showMessageDialog(this, "Choose a readable PCM WAV or AIFF recording.",
-                                "Audio import", JOptionPane.WARNING_MESSAGE);
-                    }
-                }));
+    /** Offers Auto plus one entry per channel of the selected input. */
+    private void refreshChannels() {
+        boolean wasSyncing = syncing;
+        syncing = true;
+        int channels = TunerEngine.inputChannelCount(tunerState.get().inputName());
+        var model = new DefaultComboBoxModel<String>();
+        model.addElement("Auto");
+        for (int i = 1; i <= channels; i++) model.addElement("Input " + i);
+        inputChannel.setModel(model);
+        inputChannel.setSelectedIndex(Math.min(tunerState.get().inputChannel(), channels));
+        inputChannel.setEnabled(channels > 1);
+        syncing = wasSyncing;
     }
 
     private static void row(JPanel root, int row, String label, JComponent control) {

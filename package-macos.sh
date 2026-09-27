@@ -33,7 +33,7 @@ fi
 jpackage \
     --type app-image \
     --name PulseForge \
-    --app-version 1.2.2 \
+    --app-version 1.4.4 \
     --vendor PulseForge \
     --mac-package-identifier app.pulseforge.metronome \
     --input "$PACKAGE_INPUT" \
@@ -43,5 +43,11 @@ jpackage \
     --dest "$OUTPUT_DIR" \
     --java-options "-Dapple.awt.application.name=PulseForge" \
     --java-options "-Dapple.laf.useScreenMenuBar=true"
+
+# Explain the microphone request (the tuner listens only while it is showing), then re-seal the bundle.
+PLIST="$OUTPUT_DIR/PulseForge.app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Delete :NSMicrophoneUsageDescription" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'PulseForge listens to your guitar so the tuner can show which string you are playing and how far it is from pitch.'" "$PLIST"
+codesign --force --sign - "$OUTPUT_DIR/PulseForge.app"
 
 echo "$OUTPUT_DIR/PulseForge.app"

@@ -2,148 +2,219 @@ package app.pulseforge.audio;
 
 import app.pulseforge.model.SoundType;
 
-import javax.sound.sampled.*;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.Random;
 
+/**
+ * Generated click and drum sounds. Every accent peaks at full scale; the beat and subdivision variants carry
+ * their quieter levels so the render loop mixes all sounds the same way.
+ */
 final class ClickSamples {
     private static final int RATE = AccurateAudioEngine.SAMPLE_RATE;
+    static final float BEAT_LEVEL = .62f;
+    static final float SUBDIVISION_LEVEL = .36f;
     private final Map<SoundType, SampleSet> generated = new EnumMap<>(SoundType.class);
-    private volatile CachedSample custom;
-    private volatile boolean lastLoadSucceeded;
 
     ClickSamples() {
-        generated.put(SoundType.STUDIO, tones(1900, 1250, 830, .036, .992));
-        generated.put(SoundType.DIGITAL, tones(2600, 1800, 1100, .022, .987));
-        generated.put(SoundType.WOOD, wood());
-        generated.put(SoundType.SOFT, tones(1050, 820, 610, .025, .982));
-    }
-
-    SampleSet get(SoundType type, String path) {
-        if (type == SoundType.CUSTOM && path != null && !path.isBlank()) {
-            var cached = custom;
-            if (cached != null && path.equals(cached.path())) return cached.samples();
-        }
-        return generated.getOrDefault(type, generated.get(SoundType.STUDIO));
-    }
-
-    synchronized void load(String path) {
-        if (custom != null && path.equals(custom.path())) { lastLoadSucceeded = true; return; }
-        lastLoadSucceeded = false;
-        try (AudioInputStream source = AudioSystem.getAudioInputStream(new File(path))) {
-            var targetFormat = new AudioFormat(AudioFormat.Encoding.PCM_SIGNED, RATE, 16, 1, 2, RATE, false);
-            try (AudioInputStream pcm = AudioSystem.getAudioInputStream(targetFormat, source)) {
-                byte[] bytes = readLimited(pcm, RATE * 2 * 45);
-                float[] all = decode(bytes);
-                float[] hit = extractTransient(all);
-                custom = new CachedSample(path, new SampleSet(scalePitch(hit, 1.10), hit, scalePitch(hit, .86)));
-                lastLoadSucceeded = true;
-            }
-        } catch (Exception ignored) {
-            // UI displays a fallback indicator through customSampleLoaded().
-        }
-    }
-
-    boolean customSampleLoaded() { return lastLoadSucceeded; }
-    private record CachedSample(String path, SampleSet samples) {}
-
-    private static byte[] readLimited(AudioInputStream in, int limit) throws Exception {
-        var out = new ByteArrayOutputStream(Math.min(limit, RATE * 10));
-        byte[] buffer = new byte[8192];
-        int total = 0;
-        while (total < limit) {
-            int count = in.read(buffer, 0, Math.min(buffer.length, limit - total));
-            if (count < 0) break;
-            out.write(buffer, 0, count);
-            total += count;
-        }
-        return out.toByteArray();
-    }
-
-    private static float[] decode(byte[] bytes) {
-        float[] result = new float[bytes.length / 2];
-        for (int i = 0; i < result.length; i++) {
-            int lo = bytes[i * 2] & 0xff;
-            int hi = bytes[i * 2 + 1];
-            result[i] = (short) ((hi << 8) | lo) / 32768f;
-        }
-        return result;
-    }
-
-    private static float[] extractTransient(float[] source) {
-        int scanStart = Math.min(source.length, RATE / 20);
-        int scanEnd = Math.min(source.length, RATE * 45);
-        int peak = scanStart;
-        double best = 0;
-        int window = 128;
-        for (int i = scanStart; i + window < scanEnd; i += 64) {
-            double energy = 0;
-            for (int j = 0; j < window; j++) energy += Math.abs(source[i + j]);
-            if (energy > best) { best = energy; peak = i; }
-        }
-        double threshold = best / window * .18;
-        int start = peak;
-        int earliest = Math.max(0, peak - RATE / 5);
-        while (start > earliest && Math.abs(source[start]) > threshold) start--;
-        int length = Math.min((int) (RATE * .16), source.length - start);
-        if (length <= 0 || best < .001) return new float[] {0};
-        float[] result = new float[length];
-        float max = .001f;
-        for (int i = 0; i < length; i++) max = Math.max(max, Math.abs(source[start + i]));
-        for (int i = 0; i < length; i++) {
-            double fade = i < 64 ? i / 64.0 : Math.pow(1.0 - (double) i / length, .45);
-            result[i] = (float) (source[start + i] / max * .88 * fade);
-        }
-        return result;
-    }
-
-    private static SampleSet tones(double accent, double normal, double sub, double seconds, double decay) {
-        return new SampleSet(tone(accent, seconds, decay), tone(normal, seconds, decay),
-                tone(sub, seconds * .78, decay * .997));
-    }
-
-    private static SampleSet wood() {
         var random = new Random(314159);
-        return new SampleSet(woodHit(1760, random), woodHit(1180, random), woodHit(790, random));
+        generated.put(SoundType.STUDIO, set(click(1900, .009, .35, random), click(1250, .009, .35, random),
+                click(830, .007, .35, random)));
+        generated.put(SoundType.DIGITAL, set(beep(2600, .008), beep(1800, .008), beep(1100, .006)));
+        generated.put(SoundType.SOFT, set(click(1050, .014, .06, random), click(820, .014, .06, random),
+                click(610, .011, .06, random)));
+        generated.put(SoundType.WOOD, set(wood(1760, .014, random), wood(1180, .014, random), wood(790, .011, random)));
+        float[] kick = kick(random);
+        float[] snare = snare(random);
+        float[] closedHat = hiHat(.04, random);
+        generated.put(SoundType.DRUM_KIT, new SampleSet(normalize(kick, 1), normalize(snare, .85f),
+                normalize(closedHat, .45f)));
+        generated.put(SoundType.KICK, set(kick, kick, shorten(kick, .06)));
+        generated.put(SoundType.SNARE, set(snare, snare, shorten(snare, .05)));
+        generated.put(SoundType.HI_HAT, set(hiHat(.12, random), closedHat, hiHat(.022, random)));
+        generated.put(SoundType.RIMSHOT, set(rimshot(880, random), rimshot(760, random), rimshot(660, random)));
+        generated.put(SoundType.COWBELL, set(cowbell(.12), cowbell(.09), cowbell(.05)));
+        generated.put(SoundType.CLAVE, set(clave(2500, .012), clave(2350, .010), clave(2200, .007)));
     }
 
-    private static float[] tone(double hz, double seconds, double decay) {
-        int length = (int) (RATE * seconds);
+    SampleSet get(SoundType type) { return generated.getOrDefault(type, generated.get(SoundType.STUDIO)); }
+
+    /** Accent at full scale, beat and subdivision at their fixed levels. */
+    private static SampleSet set(float[] accent, float[] beat, float[] subdivision) {
+        return new SampleSet(normalize(accent, 1), normalize(beat, BEAT_LEVEL), normalize(subdivision, SUBDIVISION_LEVEL));
+    }
+
+    /** Scales to the level and fades the last 8 ms so a truncated tail never clicks. */
+    private static float[] normalize(float[] source, float level) {
+        float peak = 1e-6f;
+        for (float value : source) peak = Math.max(peak, Math.abs(value));
+        float[] result = new float[source.length];
+        int fade = Math.min(source.length, (int) (RATE * .008));
+        for (int i = 0; i < source.length; i++) {
+            int remaining = source.length - i;
+            double tail = remaining < fade ? (double) remaining / fade : 1;
+            result[i] = (float) (source[i] / peak * level * tail);
+        }
+        return result;
+    }
+
+    /** Extra exponential fade for a tighter subdivision variant. */
+    private static float[] shorten(float[] source, double tau) {
+        int length = Math.min(source.length, (int) (RATE * tau * 6));
+        float[] result = new float[length];
+        for (int i = 0; i < length; i++) result[i] = (float) (source[i] * Math.exp(-i / (RATE * tau)));
+        return result;
+    }
+
+    private static double attack(int i, double samples) { return Math.min(1, i / samples); }
+
+    /** Sine body with a broadband tick on the attack. */
+    private static float[] click(double hz, double tau, double tick, Random random) {
+        int length = (int) (RATE * tau * 6) + 96;
         float[] data = new float[length];
         double phase = 0;
         for (int i = 0; i < length; i++) {
-            double attack = Math.min(1, i / 12.0);
-            data[i] = (float) (Math.sin(phase) * Math.pow(decay, i) * attack * .88);
+            double t = (double) i / RATE;
+            double body = Math.sin(phase) * Math.exp(-t / tau);
+            double transientPart = tick * random.nextGaussian() * Math.exp(-t / .0012);
+            data[i] = (float) ((body + transientPart) * attack(i, 8));
             phase += 2 * Math.PI * hz / RATE;
         }
         return data;
     }
 
-    private static float[] woodHit(double hz, Random random) {
-        int length = (int) (RATE * .045);
+    /** Square-ish beep: fundamental plus a third harmonic. */
+    private static float[] beep(double hz, double tau) {
+        int length = (int) (RATE * tau * 6) + 64;
         float[] data = new float[length];
         for (int i = 0; i < length; i++) {
-            double body = Math.sin(2 * Math.PI * hz * i / RATE) * .65
-                    + Math.sin(2 * Math.PI * hz * 1.71 * i / RATE) * .22;
-            double noise = (random.nextDouble() * 2 - 1) * .25;
-            data[i] = (float) ((body + noise) * Math.exp(-i / (RATE * .009)));
+            double t = (double) i / RATE;
+            double wave = Math.sin(2 * Math.PI * hz * t) + Math.sin(2 * Math.PI * 3 * hz * t) / 3;
+            data[i] = (float) (wave * Math.exp(-t / tau) * attack(i, 4));
         }
         return data;
     }
 
-    private static float[] scalePitch(float[] source, double factor) {
-        int length = Math.max(1, (int) (source.length / factor));
-        float[] result = new float[length];
+    private static float[] wood(double hz, double tau, Random random) {
+        int length = (int) (RATE * tau * 6);
+        float[] data = new float[length];
         for (int i = 0; i < length; i++) {
-            double pos = i * factor;
-            int at = Math.min(source.length - 1, (int) pos);
-            int next = Math.min(source.length - 1, at + 1);
-            result[i] = (float) (source[at] * (1 - (pos - at)) + source[next] * (pos - at));
+            double t = (double) i / RATE;
+            double body = Math.sin(2 * Math.PI * hz * t) * .65 + Math.sin(2 * Math.PI * hz * 1.71 * t) * .22
+                    + Math.sin(2 * Math.PI * hz * .53 * t) * .18;
+            double knock = random.nextGaussian() * .3 * Math.exp(-t / .0025);
+            data[i] = (float) ((body * Math.exp(-t / tau) + knock) * attack(i, 6));
         }
-        return result;
+        return data;
+    }
+
+    /** Kick: a sine sweeping down from 170 Hz to 50 Hz with a soft-clipped attack. */
+    private static float[] kick(Random random) {
+        int length = (int) (RATE * .55);
+        float[] data = new float[length];
+        double phase = 0;
+        for (int i = 0; i < length; i++) {
+            double t = (double) i / RATE;
+            double hz = 50 + 120 * Math.exp(-t / .03);
+            phase += 2 * Math.PI * hz / RATE;
+            double body = Math.sin(phase) * Math.exp(-t / .13);
+            double click = random.nextGaussian() * .35 * Math.exp(-t / .003);
+            data[i] = (float) (Math.tanh(2.2 * body + click) * attack(i, 3));
+        }
+        return data;
+    }
+
+    /** Snare: shell modes plus band-passed noise for the wires. */
+    private static float[] snare(Random random) {
+        int length = (int) (RATE * .32);
+        float[] data = new float[length];
+        double aHigh = 1 / (1 + 2 * Math.PI * 1800 / RATE);
+        double kLow = 1 - Math.exp(-2 * Math.PI * 5500 / RATE);
+        double highPass = 0;
+        double lowPass = 0;
+        double previous = 0;
+        for (int i = 0; i < length; i++) {
+            double t = (double) i / RATE;
+            double shell = (Math.sin(2 * Math.PI * 184 * t) * .55 + Math.sin(2 * Math.PI * 331 * t) * .35
+                    + Math.sin(2 * Math.PI * 476 * t) * .1) * Math.exp(-t / .05);
+            double white = random.nextGaussian();
+            highPass = aHigh * (highPass + white - previous);
+            previous = white;
+            lowPass += (highPass - lowPass) * kLow;
+            double wires = lowPass * Math.exp(-t / .10) * .7;
+            double crack = white * Math.exp(-t / .002) * .5;
+            data[i] = (float) (Math.tanh(1.6 * (shell + wires + crack)) * attack(i, 3));
+        }
+        return data;
+    }
+
+    /** Hi-hat: six square waves in the classic inharmonic ratios, high-passed twice at 7 kHz. */
+    private static float[] hiHat(double tau, Random random) {
+        double[] partials = {205.3, 304.4, 369.6, 522.7, 540, 800};
+        int length = (int) (RATE * tau * 5) + 48;
+        float[] data = new float[length];
+        double a = 1 / (1 + 2 * Math.PI * 7000 / RATE);
+        double y1 = 0, x1 = 0, y2 = 0, x2 = 0;
+        for (int i = 0; i < length; i++) {
+            double t = (double) i / RATE;
+            double metal = 0;
+            for (double hz : partials) metal += Math.signum(Math.sin(2 * Math.PI * hz * t));
+            metal = metal / partials.length + random.nextGaussian() * .15;
+            y1 = a * (y1 + metal - x1);
+            x1 = metal;
+            y2 = a * (y2 + y1 - x2);
+            x2 = y1;
+            data[i] = (float) (y2 * Math.exp(-t / tau) * attack(i, 2));
+        }
+        return data;
+    }
+
+    /** Rimshot: a crack with a short woody ring. */
+    private static float[] rimshot(double hz, Random random) {
+        int length = (int) (RATE * .07);
+        float[] data = new float[length];
+        for (int i = 0; i < length; i++) {
+            double t = (double) i / RATE;
+            double crack = random.nextGaussian() * Math.exp(-t / .0015) * .8;
+            double ring = Math.sin(2 * Math.PI * hz * t) * Math.exp(-t / .018) * .7
+                    + Math.sin(2 * Math.PI * hz * 2.4 * t) * Math.exp(-t / .006) * .4;
+            data[i] = (float) (Math.tanh(1.5 * (crack + ring)) * attack(i, 2));
+        }
+        return data;
+    }
+
+    /** Cowbell: two square waves at 587 and 845 Hz through a band-pass. */
+    private static float[] cowbell(double tau) {
+        int length = (int) (RATE * tau * 5);
+        float[] data = new float[length];
+        double lowPass = 0;
+        double kLow = 1 - Math.exp(-2 * Math.PI * 2600 / RATE);
+        double aHigh = 1 / (1 + 2 * Math.PI * 450 / RATE);
+        double highPass = 0;
+        double previous = 0;
+        for (int i = 0; i < length; i++) {
+            double t = (double) i / RATE;
+            double raw = Math.signum(Math.sin(2 * Math.PI * 587 * t)) + Math.signum(Math.sin(2 * Math.PI * 845 * t));
+            lowPass += (raw - lowPass) * kLow;
+            highPass = aHigh * (highPass + lowPass - previous);
+            previous = lowPass;
+            double envelope = Math.exp(-t / .012) * .6 + Math.exp(-t / tau) * .5;
+            data[i] = (float) (highPass * envelope * attack(i, 2));
+        }
+        return data;
+    }
+
+    /** Clave: a bright resonant ping. */
+    private static float[] clave(double hz, double tau) {
+        int length = (int) (RATE * tau * 6) + 32;
+        float[] data = new float[length];
+        for (int i = 0; i < length; i++) {
+            double t = (double) i / RATE;
+            double wave = Math.sin(2 * Math.PI * hz * t) * Math.exp(-t / tau)
+                    + Math.sin(2 * Math.PI * hz * 2.02 * t) * Math.exp(-t / (tau / 2)) * .3;
+            data[i] = (float) (wave * attack(i, 1));
+        }
+        return data;
     }
 
     record SampleSet(float[] accent, float[] normal, float[] subdivision) {}

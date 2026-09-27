@@ -5,8 +5,7 @@ import java.util.List;
 
 public record MetronomeSettings(
         double bpm, int beatsPerBar, int beatUnit, double volume, SoundType sound,
-        double swing, String mixerName, String customSamplePath,
-        List<Accent> accents, List<BeatPattern> patterns
+        double swing, String mixerName, List<Accent> accents, List<BeatPattern> patterns
 ) {
     public static final List<Integer> NOTE_VALUES = List.of(1, 2, 4, 8, 16, 32);
 
@@ -18,7 +17,6 @@ public record MetronomeSettings(
         swing = Double.isFinite(swing) ? Math.clamp(swing, .5, .75) : .5;
         sound = sound == null ? SoundType.STUDIO : sound;
         mixerName = mixerName == null ? "System Default" : mixerName;
-        customSamplePath = customSamplePath == null ? "" : customSamplePath;
         var safeAccents = new ArrayList<Accent>();
         var safePatterns = new ArrayList<BeatPattern>();
         for (int i = 0; i < beatsPerBar; i++) {

@@ -2,35 +2,48 @@ package app.pulseforge.ui;
 
 import app.pulseforge.audio.AccurateAudioEngine;
 import app.pulseforge.audio.TransportState;
+import app.pulseforge.audio.TunerEngine;
 import app.pulseforge.model.MetronomeSettings;
 import app.pulseforge.model.MetronomeState;
+import app.pulseforge.model.TunerState;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.AffineTransform;
+import java.awt.geom.Area;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.RoundRectangle2D;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
 public final class MainWindow extends JFrame {
     private final MetronomeState state;
     private final AccurateAudioEngine engine;
+    private final TunerEngine tunerEngine;
     private final TempoWheel wheel;
     private final JButton tempo = Theme.button("");
     private final JButton signature = Theme.button("");
     private final MovingBeatBar beatBar;
     private final TimeSignatureDialog signatureDialog;
-    private final SettingsDialog soundDialog;
+    private final SettingsDialog settingsDialog;
+    private final ModeToggle modeToggle = new ModeToggle();
+    private final JPanel cards = new JPanel(new CardLayout());
+    private final TunerPanel tunerPanel;
     private final Deque<Long> taps = new ArrayDeque<>();
     private final Timer animation;
+    private ModeToggle.Mode mode = ModeToggle.Mode.METRONOME;
 
-    public MainWindow(MetronomeState state, AccurateAudioEngine engine) {
+    public MainWindow(MetronomeState state, AccurateAudioEngine engine, TunerState tunerState, TunerEngine tunerEngine) {
         super("PulseForge");
         this.state = state;
         this.engine = engine;
+        this.tunerEngine = tunerEngine;
         wheel = new TempoWheel(state.get().bpm());
         beatBar = new MovingBeatBar(state, engine);
         signatureDialog = new TimeSignatureDialog(this, state);
-        soundDialog = new SettingsDialog(this, state, engine);
+        settingsDialog = new SettingsDialog(this, state, engine, tunerState, tunerEngine);
+        tunerPanel = new TunerPanel(this, tunerState, tunerEngine);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setResizable(false);
         setLocationByPlatform(true);
@@ -39,17 +52,20 @@ public final class MainWindow extends JFrame {
         root.setBorder(new EmptyBorder(10, 16, 16, 16));
         setContentPane(root);
 
-        var top = Theme.panel(new BorderLayout(0, 6));
-        var soundRow = Theme.panel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        var sound = Theme.button("Sound");
-        sound.setName("soundSettings");
-        sound.setToolTipText("Output device, volume and click sound");
-        sound.setIcon(new SpeakerIcon());
-        sound.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        sound.setBorder(new EmptyBorder(5, 9, 5, 9));
-        sound.addActionListener(e -> soundDialog.open());
-        soundRow.add(sound);
-        top.add(soundRow, BorderLayout.NORTH);
+        var header = Theme.panel(new BorderLayout(8, 0));
+        header.add(modeToggle, BorderLayout.WEST);
+        var gear = Theme.button("");
+        gear.setName("settings");
+        gear.setToolTipText("Settings: output, volume, click sound and microphone");
+        gear.setIcon(new GearIcon());
+        gear.setBorder(new EmptyBorder(5, 8, 5, 8));
+        gear.addActionListener(e -> settingsDialog.open());
+        var settingsRow = Theme.panel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        settingsRow.add(gear);
+        header.add(settingsRow, BorderLayout.EAST);
+        root.add(header, BorderLayout.NORTH);
+
+        var metronome = Theme.panel(new BorderLayout(0, 8));
         var readout = Theme.panel(new GridLayout(1, 2, 8, 0));
         tempo.setName("tempo");
         signature.setName("timeSignature");
@@ -62,15 +78,14 @@ public final class MainWindow extends JFrame {
         readout.add(tempo);
         readout.add(signature);
         readout.setPreferredSize(new Dimension(328, 78));
-        top.add(readout, BorderLayout.CENTER);
-        root.add(top, BorderLayout.NORTH);
+        metronome.add(readout, BorderLayout.NORTH);
 
         var middle = Theme.panel(new BorderLayout(0, 8));
         beatBar.setPreferredSize(new Dimension(328, 65));
         beatBar.setBeatClick(beat -> signatureDialog.open(beat));
         middle.add(beatBar, BorderLayout.NORTH);
         middle.add(wheel, BorderLayout.CENTER);
-        root.add(middle, BorderLayout.CENTER);
+        metronome.add(middle, BorderLayout.CENTER);
 
         var controls = Theme.panel(new BorderLayout(8, 0));
         var minus = Theme.button("−");
@@ -88,9 +103,15 @@ public final class MainWindow extends JFrame {
         controls.add(minus, BorderLayout.WEST);
         controls.add(tap, BorderLayout.CENTER);
         controls.add(plus, BorderLayout.EAST);
-        root.add(controls, BorderLayout.SOUTH);
-        root.setPreferredSize(new Dimension(360, 440));
+        metronome.add(controls, BorderLayout.SOUTH);
 
+        cards.setOpaque(false);
+        cards.add(metronome, ModeToggle.Mode.METRONOME.name());
+        cards.add(tunerPanel, ModeToggle.Mode.TUNER.name());
+        root.add(cards, BorderLayout.CENTER);
+        root.setPreferredSize(new Dimension(360, 442));
+
+        modeToggle.setListener(this::setMode);
         wheel.setChangeListener(state::setBpm);
         wheel.setTransportAction(engine::togglePlayPause);
         engine.addTransportListener(value -> {
@@ -100,22 +121,46 @@ public final class MainWindow extends JFrame {
                 JOptionPane.showMessageDialog(this, engine.errorMessage(), "Audio output", JOptionPane.WARNING_MESSAGE);
         });
         state.addListener(settings -> SwingUtilities.invokeLater(() -> sync(settings)));
-        bind("SPACE", "playPause", engine::togglePlayPause);
-        bind("pressed T", "tap", this::tapTempo);
-        bind("LEFT", "slower", () -> state.setBpm(state.get().bpm() - 1));
-        bind("RIGHT", "faster", () -> state.setBpm(state.get().bpm() + 1));
+        bind("SPACE", "playPause", () -> { if (isMetronome()) engine.togglePlayPause(); else tunerPanel.toggleAuto(); });
+        bind("pressed T", "tap", () -> { if (isMetronome()) tapTempo(); });
+        bind("LEFT", "slower", () -> { if (isMetronome()) state.setBpm(state.get().bpm() - 1); else tunerPanel.selectNeighbour(-1); });
+        bind("RIGHT", "faster", () -> { if (isMetronome()) state.setBpm(state.get().bpm() + 1); else tunerPanel.selectNeighbour(1); });
+        bind("meta 1", "showMetronome", () -> setMode(ModeToggle.Mode.METRONOME));
+        bind("meta 2", "showTuner", () -> setMode(ModeToggle.Mode.TUNER));
         animation = new Timer(16, e -> { if (engine.isPlaying()) beatBar.repaint(); });
         animation.start();
         addWindowListener(new WindowAdapter() {
             @Override public void windowClosed(WindowEvent event) {
                 animation.stop();
+                tunerPanel.deactivate();
+                tunerPanel.dispose();
                 signatureDialog.dispose();
-                soundDialog.dispose();
+                settingsDialog.dispose();
                 engine.close();
+                tunerEngine.close();
             }
         });
         sync(state.get());
         pack();
+    }
+
+    ModeToggle.Mode mode() { return mode; }
+    TunerPanel tunerPanel() { return tunerPanel; }
+    private boolean isMetronome() { return mode == ModeToggle.Mode.METRONOME; }
+
+    /** Shows the metronome or the tuner; the microphone is open only while the tuner is showing. */
+    void setMode(ModeToggle.Mode next) {
+        if (mode == next) return;
+        mode = next;
+        modeToggle.setMode(next);
+        ((CardLayout) cards.getLayout()).show(cards, next.name());
+        if (next == ModeToggle.Mode.TUNER) {
+            if (engine.isPlaying()) engine.pause();
+            tunerPanel.activate();
+        } else {
+            tunerPanel.deactivate();
+            wheel.requestFocusInWindow();
+        }
     }
 
     private void sync(MetronomeSettings settings) {
@@ -155,7 +200,7 @@ public final class MainWindow extends JFrame {
         });
     }
 
-    private static final class SpeakerIcon implements Icon {
+    private static final class GearIcon implements Icon {
         public int getIconWidth() { return 16; }
         public int getIconHeight() { return 16; }
         public void paintIcon(Component c, Graphics graphics, int x, int y) {
@@ -163,9 +208,14 @@ public final class MainWindow extends JFrame {
             g.translate(x, y);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setColor(c.getForeground());
-            g.fillPolygon(new int[]{2, 5, 9, 9, 5, 2}, new int[]{6, 6, 3, 13, 10, 10}, 6);
-            g.setStroke(new BasicStroke(1.3f));
-            g.drawArc(7, 4, 7, 8, -65, 130);
+            var gear = new Area(new Ellipse2D.Double(2.8, 2.8, 10.4, 10.4));
+            for (int i = 0; i < 8; i++) {
+                var tooth = new Area(new RoundRectangle2D.Double(6.5, .4, 3, 4.2, 1.6, 1.6));
+                tooth.transform(AffineTransform.getRotateInstance(i * Math.PI / 4, 8, 8));
+                gear.add(tooth);
+            }
+            gear.subtract(new Area(new Ellipse2D.Double(5.7, 5.7, 4.6, 4.6)));
+            g.fill(gear);
             g.dispose();
         }
     }
