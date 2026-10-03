@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="T&amp;T Pro: Tone &amp; Tempo">
+  <title>T&amp;T Pro</title>
+  <desc>A teal tuning fork for tone beside an amber metronome pendulum for tempo, on a dark rounded square.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#243247"/>
+      <stop offset="1" stop-color="#0C1119"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.10"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="fork" gradientUnits="userSpaceOnUse" x1="0" y1="230" x2="0" y2="800">
+      <stop offset="0" stop-color="#7BE6CF"/>
+      <stop offset="1" stop-color="#3EC9AD"/>
+    </linearGradient>
+    <radialGradient id="ball" cx="0.35" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#FFD089"/>
+      <stop offset="1" stop-color="#F0962B"/>
+    </radialGradient>
+  </defs>
+
+  <!-- macOS-style rounded square -->
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="230" fill="url(#sheen)"/>
+
+  <!-- Tone: tuning fork -->
+  <g fill="none" stroke="url(#fork)" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 262 230 V 580 A 66 66 0 0 0 394 580 V 230"/>
+    <path d="M 328 646 V 800"/>
+  </g>
+  <circle cx="328" cy="818" r="34" fill="#3EC9AD"/>
+
+  <!-- Tempo: metronome pendulum with its swing -->
+  <path d="M 493.5 452 A 370 370 0 0 1 782 467" fill="none" stroke="#49E1B9" stroke-opacity="0.55" stroke-width="20" stroke-linecap="round"/>
+  <line x1="620" y1="800" x2="790" y2="300" stroke="#5B8DEF" stroke-width="44" stroke-linecap="round"/>
+  <circle cx="739" cy="450" r="80" fill="url(#ball)"/>
+  <circle cx="620" cy="800" r="38" fill="#F6F9FB"/>
+  <circle cx="620" cy="800" r="14" fill="#1A2433"/>
+</svg>

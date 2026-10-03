@@ -3,7 +3,8 @@ set -euo pipefail
 
 PROJECT_DIR=${0:A:h}
 BUILD_DIR="$PROJECT_DIR/build"
-ICONSET_DIR="$BUILD_DIR/PulseForge.iconset"
+APP_NAME="T&T Pro"
+ICONSET_DIR="$BUILD_DIR/tt-pro.iconset"
 PACKAGE_INPUT="$BUILD_DIR/package-input"
 OUTPUT_DIR="$PROJECT_DIR/dist"
 
@@ -11,7 +12,7 @@ cd "$PROJECT_DIR"
 mvn clean package
 
 mkdir -p "$BUILD_DIR" "$ICONSET_DIR" "$PACKAGE_INPUT"
-java -Djava.awt.headless=true -cp target/classes app.pulseforge.ui.AppIcon "$BUILD_DIR/icon-1024.png"
+java -Djava.awt.headless=true -cp target/classes app.tonetempo.ui.AppIcon "$BUILD_DIR/icon-1024.png"
 
 for spec in "16:icon_16x16.png" "32:icon_16x16@2x.png" "32:icon_32x32.png" \
             "64:icon_32x32@2x.png" "128:icon_128x128.png" "256:icon_128x128@2x.png" \
@@ -21,33 +22,38 @@ for spec in "16:icon_16x16.png" "32:icon_16x16@2x.png" "32:icon_32x32.png" \
     filename=${spec#*:}
     sips -z "$pixels" "$pixels" "$BUILD_DIR/icon-1024.png" --out "$ICONSET_DIR/$filename" >/dev/null
 done
-iconutil -c icns "$ICONSET_DIR" -o "$BUILD_DIR/PulseForge.icns"
+iconutil -c icns "$ICONSET_DIR" -o "$BUILD_DIR/tt-pro.icns"
 
-cp target/pulseforge.jar "$PACKAGE_INPUT/pulseforge.jar"
+rm -f "$PACKAGE_INPUT"/*.jar
+cp target/tt-pro.jar "$PACKAGE_INPUT/tt-pro.jar"
 mkdir -p "$OUTPUT_DIR"
-if [[ -d "$OUTPUT_DIR/PulseForge.app" ]]; then
-    BACKUP_NAME="PulseForge.$(date +%Y%m%d-%H%M%S).app"
-    mv "$OUTPUT_DIR/PulseForge.app" "$OUTPUT_DIR/$BACKUP_NAME"
+if [[ -d "$OUTPUT_DIR/$APP_NAME.app" ]]; then
+    BACKUP_NAME="$APP_NAME.$(date +%Y%m%d-%H%M%S).app"
+    mv "$OUTPUT_DIR/$APP_NAME.app" "$OUTPUT_DIR/$BACKUP_NAME"
 fi
 
 jpackage \
     --type app-image \
-    --name PulseForge \
-    --app-version 1.4.4 \
-    --vendor PulseForge \
-    --mac-package-identifier app.pulseforge.metronome \
+    --name "$APP_NAME" \
+    --app-version 1.5.0 \
+    --vendor "Tone & Tempo" \
+    --mac-package-identifier app.tonetempo.pro \
     --input "$PACKAGE_INPUT" \
-    --main-jar pulseforge.jar \
-    --main-class app.pulseforge.PulseForgeApplication \
-    --icon "$BUILD_DIR/PulseForge.icns" \
+    --main-jar tt-pro.jar \
+    --main-class app.tonetempo.ToneTempoApplication \
+    --icon "$BUILD_DIR/tt-pro.icns" \
     --dest "$OUTPUT_DIR" \
-    --java-options "-Dapple.awt.application.name=PulseForge" \
     --java-options "-Dapple.laf.useScreenMenuBar=true"
+# The application name for the menu bar is set in ToneTempoApplication; jpackage would split it at the space.
+
+# jpackage writes the ampersand of "T&T Pro" into Info.plist unescaped; make the plist valid XML again.
+PLIST="$OUTPUT_DIR/$APP_NAME.app/Contents/Info.plist"
+sed -i '' -e 's/&amp;/\&/g' -e 's/&/\&amp;/g' "$PLIST"
+plutil -lint "$PLIST" >/dev/null
 
 # Explain the microphone request (the tuner listens only while it is showing), then re-seal the bundle.
-PLIST="$OUTPUT_DIR/PulseForge.app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Delete :NSMicrophoneUsageDescription" "$PLIST" 2>/dev/null || true
-/usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'PulseForge listens to your guitar so the tuner can show which string you are playing and how far it is from pitch.'" "$PLIST"
-codesign --force --sign - "$OUTPUT_DIR/PulseForge.app"
+/usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'T&T Pro listens to your guitar so the tuner can show which string you are playing and how far it is from pitch.'" "$PLIST"
+codesign --force --sign - "$OUTPUT_DIR/$APP_NAME.app"
 
-echo "$OUTPUT_DIR/PulseForge.app"
+echo "$OUTPUT_DIR/$APP_NAME.app"

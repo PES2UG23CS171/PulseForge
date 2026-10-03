@@ -2,6 +2,6 @@ target/
 .DS_Store
 dist/
 build/
-PulseForge.app/
+T&T Pro.app/
 *.iml
 .idea/

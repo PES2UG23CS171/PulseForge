@@ -1,10 +1,14 @@
-# PulseForge
+<img src="docs/icon.svg" width="96" align="left" alt="T&T Pro icon: a tuning fork beside a metronome pendulum">
 
-A compact macOS metronome and guitar tuner built with Java 21 and Spring. The app includes its own Java runtime.
+# T&T Pro
+
+**Tone & Tempo Pro** is a compact macOS metronome and guitar tuner built with Java 21 and Spring. The app includes its own Java runtime.
+
+<br clear="left">
 
 <p>
-<img src="docs/images/main.png" width="300" alt="PulseForge metronome with the Metronome / Tuner switch, Tempo, Time Signature, a moving beat bar and a tempo knob with play/pause">
-<img src="docs/images/tuner.png" width="300" alt="PulseForge tuner showing the low E string nine cents flat with a Tune up hint">
+<img src="docs/images/main.png" width="300" alt="T&T Pro metronome with the Metronome / Tuner switch, Tempo, Time Signature, a moving beat bar and a tempo knob with play/pause">
+<img src="docs/images/tuner.png" width="300" alt="T&T Pro tuner showing the low E string nine cents flat with a Tune up hint">
 </p>
 
 ## Use it
@@ -29,7 +33,7 @@ For the example **triplet / crotchet / semiquavers / crotchet** in 4/4:
 
 <img src="docs/images/time-signature.png" width="468" alt="Time Signature editor showing independent rhythms for four beats">
 
-Patterns divide one selected beat into 1, 2, 3, 4, 6 or 8 equal parts. Note names and notation adapt to the time-signature denominator. Swing applies to paired subdivisions. Beat-pattern edits and tempo changes take effect at the next beat boundary. Settings survive relaunches; older global-rhythm settings migrate to each beat.
+Patterns divide one selected beat into 1, 2, 3, 4, 6 or 8 equal parts. Note names and notation adapt to the time-signature denominator. Swing applies to paired subdivisions. Beat-pattern edits and tempo changes take effect at the next beat boundary. Settings survive relaunches, carry over from the app's earlier name (PulseForge), and older global-rhythm settings migrate to each beat.
 
 ### Tuner
 
@@ -63,21 +67,21 @@ Requires macOS, JDK 21 including jpackage, and Maven:
 ./package-macos.sh
 ```
 
-Double-click `dist/PulseForge.app`. The packaged app includes Java and does not require Maven to run. The build targets the Mac architecture used to package it. It is locally signed, not Apple-notarized, and its Info.plist explains the microphone request.
+Double-click `T&T Pro.app` in `dist`. The packaged app includes Java and does not require Maven to run. The build targets the Mac architecture used to package it. It is locally signed, not Apple-notarized, and its Info.plist explains the microphone request.
 
 For development:
 
 ```sh
 mvn clean test
 mvn package
-java -jar target/pulseforge.jar
+java -jar target/tt-pro.jar
 ```
 
 Optional native checks (isolated from saved user settings; the UI check feeds the tuner a synthetic string instead of the microphone):
 
 ```sh
-java -cp target/test-classes:target/classes app.pulseforge.ui.UiVerification build/ui-check
-java -cp target/test-classes:target/classes app.pulseforge.audio.AudioVerification
+java -cp target/test-classes:target/classes app.tonetempo.ui.UiVerification build/ui-check
+java -cp target/test-classes:target/classes app.tonetempo.audio.AudioVerification
 ```
 
 The audio-device check runs at zero volume.
